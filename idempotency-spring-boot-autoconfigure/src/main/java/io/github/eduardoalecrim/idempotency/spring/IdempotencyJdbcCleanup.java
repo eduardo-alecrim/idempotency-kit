@@ -25,6 +25,7 @@ final class IdempotencyJdbcCleanup implements SmartLifecycle {
     private final Duration interval;
     private final int batchSize;
     private @Nullable ScheduledExecutorService executor;
+    private @Nullable Future<?> schedule;
 
     IdempotencyJdbcCleanup(IdempotencyStore store, Clock clock, Duration interval, int batchSize) {
         this.store = store;
@@ -62,14 +63,18 @@ final class IdempotencyJdbcCleanup implements SmartLifecycle {
             return thread;
         });
         long millis = interval.toMillis();
-        // purge() catches and logs its own failures, so the future carries nothing to check.
-        Future<?> unused = started.scheduleWithFixedDelay(this::purge, millis, millis, TimeUnit.MILLISECONDS);
+        schedule = started.scheduleWithFixedDelay(this::purge, millis, millis, TimeUnit.MILLISECONDS);
         executor = started;
     }
 
     @Override
     public synchronized void stop() {
         ScheduledExecutorService running = executor;
+        Future<?> scheduled = schedule;
+        if (scheduled != null) {
+            scheduled.cancel(true);
+            schedule = null;
+        }
         if (running != null) {
             running.shutdownNow();
             executor = null;
