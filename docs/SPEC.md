@@ -780,6 +780,7 @@ idempotency-kit/
 ├── idempotency-quarkus/          # runtime/, deployment/, integration-tests/
 ├── idempotency-client/
 ├── idempotency-test-kit/
+├── coverage-report/              # aggregated JaCoCo report, not published
 ├── samples/                      # spring-boot-sample/, quarkus-sample/
 ├── benchmarks/                   # src/jmh/, k6/
 ├── docs/                         # SPEC.md, adr/, site/ (MkDocs content)

@@ -14,6 +14,10 @@
   <name>idempotency-core</name>
   <description>Engine, key parser, fingerprints, store SPI and in-memory store. No runtime dependencies.</description>
 
+  <properties>
+    <coverage.line.minimum>0.90</coverage.line.minimum>
+  </properties>
+
   <dependencies>
     <!-- Annotations only; not needed at runtime -->
     <dependency>
@@ -38,4 +42,32 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>enforce-no-runtime-dependencies</id>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <bannedDependencies>
+                  <excludes>
+                    <exclude>*:*:*:*:compile</exclude>
+                    <exclude>*:*:*:*:runtime</exclude>
+                  </excludes>
+                  <message>idempotency-core has no runtime dependencies (ADR 0003).</message>
+                </bannedDependencies>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
 </project>
