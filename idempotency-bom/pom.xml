@@ -4,39 +4,17 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <!-- No parent: importing this BOM must not import the build's own dependency management. -->
-  <groupId>io.github.eduardo-alecrim</groupId>
+  <parent>
+    <groupId>io.github.eduardo-alecrim</groupId>
+    <artifactId>idempotency-parent</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+  </parent>
+
   <artifactId>idempotency-bom</artifactId>
-  <version>0.1.0-SNAPSHOT</version>
   <packaging>pom</packaging>
 
   <name>idempotency-bom</name>
   <description>Aligns the versions of every idempotency-kit module.</description>
-  <url>https://github.com/eduardo-alecrim/idempotency-kit</url>
-  <inceptionYear>2026</inceptionYear>
-
-  <licenses>
-    <license>
-      <name>Apache-2.0</name>
-      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
-      <distribution>repo</distribution>
-    </license>
-  </licenses>
-
-  <developers>
-    <developer>
-      <id>eduardo-alecrim</id>
-      <name>Eduardo Alecrim</name>
-      <url>https://eduardo-alecrim.github.io</url>
-    </developer>
-  </developers>
-
-  <scm>
-    <connection>scm:git:https://github.com/eduardo-alecrim/idempotency-kit.git</connection>
-    <developerConnection>scm:git:git@github.com:eduardo-alecrim/idempotency-kit.git</developerConnection>
-    <url>https://github.com/eduardo-alecrim/idempotency-kit</url>
-    <tag>HEAD</tag>
-  </scm>
 
   <dependencyManagement>
     <dependencies>
@@ -87,4 +65,37 @@
       </dependency>
     </dependencies>
   </dependencyManagement>
+
+  <build>
+    <plugins>
+      <!-- The published BOM keeps only its own dependency management, not the parent's -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>flatten-maven-plugin</artifactId>
+        <configuration>
+          <flattenMode>bom</flattenMode>
+          <updatePomFile>true</updatePomFile>
+          <pomElements>
+            <properties>remove</properties>
+          </pomElements>
+        </configuration>
+        <executions>
+          <execution>
+            <id>flatten</id>
+            <phase>process-resources</phase>
+            <goals>
+              <goal>flatten</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>flatten-clean</id>
+            <phase>clean</phase>
+            <goals>
+              <goal>clean</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
 </project>

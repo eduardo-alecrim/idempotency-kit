@@ -2,6 +2,12 @@
 target/
 *.class
 
+# jqwik failure database
+.jqwik-database
+
+# flatten-maven-plugin output
+.flattened-pom.xml
+
 # IDEs
 .idea/
 *.iml

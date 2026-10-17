@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd"
+         child.project.url.inherit.append.path="false">
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>io.github.eduardo-alecrim</groupId>
@@ -30,7 +31,9 @@
     </developer>
   </developers>
 
-  <scm>
+  <scm child.scm.connection.inherit.append.path="false"
+       child.scm.developerConnection.inherit.append.path="false"
+       child.scm.url.inherit.append.path="false">
     <connection>scm:git:https://github.com/eduardo-alecrim/idempotency-kit.git</connection>
     <developerConnection>scm:git:git@github.com:eduardo-alecrim/idempotency-kit.git</developerConnection>
     <url>https://github.com/eduardo-alecrim/idempotency-kit</url>
@@ -85,6 +88,9 @@
     <maven-deploy-plugin.version>3.2.0</maven-deploy-plugin.version>
     <maven-site-plugin.version>3.22.0</maven-site-plugin.version>
     <maven-wrapper-plugin.version>3.3.4</maven-wrapper-plugin.version>
+    <flatten-maven-plugin.version>1.8.0</flatten-maven-plugin.version>
+    <spotless-maven-plugin.version>3.10.4</spotless-maven-plugin.version>
+    <palantir-java-format.version>2.102.0</palantir-java-format.version>
   </properties>
 
   <dependencyManagement>
@@ -220,6 +226,28 @@
           <artifactId>maven-wrapper-plugin</artifactId>
           <version>${maven-wrapper-plugin.version}</version>
         </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>flatten-maven-plugin</artifactId>
+          <version>${flatten-maven-plugin.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>com.diffplug.spotless</groupId>
+          <artifactId>spotless-maven-plugin</artifactId>
+          <version>${spotless-maven-plugin.version}</version>
+          <configuration>
+            <java>
+              <palantirJavaFormat>
+                <version>${palantir-java-format.version}</version>
+              </palantirJavaFormat>
+              <licenseHeader>
+                <content>// SPDX-License-Identifier: Apache-2.0</content>
+                <!-- package-info files start with Javadoc or an annotation, not with "package" -->
+                <delimiter>(package |import |public |class |module |@|/\*\*)</delimiter>
+              </licenseHeader>
+            </java>
+          </configuration>
+        </plugin>
       </plugins>
     </pluginManagement>
 
@@ -232,6 +260,17 @@
             <id>attach-sources</id>
             <goals>
               <goal>jar-no-fork</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>com.diffplug.spotless</groupId>
+        <artifactId>spotless-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <goals>
+              <goal>check</goal>
             </goals>
           </execution>
         </executions>
