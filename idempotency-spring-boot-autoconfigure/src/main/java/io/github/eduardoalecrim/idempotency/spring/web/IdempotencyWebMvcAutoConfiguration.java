@@ -41,6 +41,15 @@ public final class IdempotencyWebMvcAutoConfiguration {
                 mapping::getObject, new OperationPolicies(defaults, beanFactory), properties.getRoutes());
     }
 
+    /** Fails startup on invalid idempotent handlers and logs the valid operations. */
+    @Bean
+    IdempotentHandlerValidator idempotentHandlerValidator(
+            IdempotencyProperties properties,
+            IdempotentHandlerResolver resolver,
+            @Qualifier("requestMappingHandlerMapping") ObjectProvider<RequestMappingHandlerMapping> mapping) {
+        return new IdempotentHandlerValidator(mapping::getObject, resolver, PropertiesMapper.methods(properties));
+    }
+
     /** The filter, at {@code idempotency.web.filter-order}, for request dispatches only. */
     @Bean
     FilterRegistrationBean<IdempotencyFilter> idempotencyFilter(

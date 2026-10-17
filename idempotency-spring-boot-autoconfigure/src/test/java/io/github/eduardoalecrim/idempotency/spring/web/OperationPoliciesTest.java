@@ -100,7 +100,8 @@ class OperationPoliciesTest {
         route.setMethods(List.of("post", "PATCH"));
         assertThat(new IdempotentHandlerResolver(OperationPoliciesTest::noMapping, policies, List.of(route))
                         .configuredRoutes())
-                .containsExactlyInAnyOrder("POST /legacy/{id}", "PATCH /legacy/{id}");
+                .extracting(r -> r.method() + " " + r.routeTemplate())
+                .containsExactly("PATCH /legacy/{id}", "POST /legacy/{id}");
     }
 
     @Test
