@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.eduardoalecrim.idempotency;
 
+import io.github.eduardoalecrim.idempotency.fingerprint.FingerprintStrategy;
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
@@ -30,6 +31,12 @@ public @interface Idempotent {
 
     /** Whether keys are separate per client identity or shared by every client. */
     Scope scope() default Scope.CLIENT;
+
+    /**
+     * Strategy used to fingerprint requests: a framework bean when there is one of this type, otherwise created through
+     * its no-argument constructor. The default is the configured {@link FingerprintStrategy.Default}.
+     */
+    Class<? extends FingerprintStrategy> fingerprint() default FingerprintStrategy.Default.class;
 
     /** Request headers added to the fingerprint, on top of the global list. */
     String[] fingerprintHeaders() default {};
