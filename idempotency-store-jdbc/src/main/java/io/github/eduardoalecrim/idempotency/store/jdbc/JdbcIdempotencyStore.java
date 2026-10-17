@@ -183,8 +183,11 @@ public final class JdbcIdempotencyStore implements IdempotencyStore, Idempotency
     @Override
     public StoreHealth health() {
         try (Connection connection = connection();
-                PreparedStatement statement = prepare(connection, dialect().ping())) {
-            statement.executeQuery().close();
+                PreparedStatement statement = prepare(connection, dialect().ping());
+                ResultSet rows = statement.executeQuery()) {
+            if (!rows.next()) {
+                return StoreHealth.down("jdbc: the ping returned no row");
+            }
             return StoreHealth.up("jdbc, " + connection.getMetaData().getDatabaseProductName());
         } catch (SQLException | IdempotencyStoreException e) {
             return StoreHealth.down("jdbc: " + e.getMessage());
