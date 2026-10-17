@@ -12,7 +12,7 @@
 
 Clients retry. A timeout after `POST /payments` leaves the client unsure whether the payment happened, so it sends the request again, and a non-idempotent endpoint charges twice.
 
-idempotency-kit implements the IETF draft [*The Idempotency-Key HTTP Header Field*](https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/). The first request with a key runs and its response is stored. A retry with the same key gets the stored response back, without running the operation again. A retry that arrives while the first request is still running gets `409 Conflict`. The same key with a different payload gets `422 Unprocessable Content`.
+idempotency-kit implements revision 07 of the IETF draft [*The Idempotency-Key HTTP Header Field*](https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-idempotency-key-header-07). The first request with a key runs and its response is stored. A retry with the same key gets the stored response back, without running the operation again. A retry that arrives while the first request is still running gets `409 Conflict`. The same key with a different payload gets `422 Unprocessable Content`.
 
 The protocol lives in a framework-free core. A Spring Boot starter and a Quarkus extension sit on top of it, with stores for PostgreSQL, MySQL, MariaDB, Oracle, SQL Server and Redis. One test compatibility kit (TCK) checks that every store and every framework behaves the same way.
 
@@ -103,7 +103,7 @@ A retry with the same key and body returns the original `201 Created`, the same 
 | M6 Docs and 0.1.0 | Documentation site and first release on Maven Central | planned |
 | M7 1.0 | WebFlux, API compatibility checks, published benchmarks | planned |
 
-The [specification](docs/SPEC.md) has the semantics, requirements, architecture, decisions and the task list for each milestone.
+The [specification](docs/SPEC.md) has the semantics, requirements and architecture. Terms are defined in the [glossary](GLOSSARY.md), decisions in the [ADRs](docs/adr), and the work is tracked in [milestones](https://github.com/eduardo-alecrim/idempotency-kit/milestones).
 
 ## Related projects
 
