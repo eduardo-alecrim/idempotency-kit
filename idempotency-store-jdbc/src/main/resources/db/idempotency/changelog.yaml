@@ -1,0 +1,44 @@
+# Include from the application's master changelog:
+#   - include:
+#       file: db/idempotency/changelog.yaml
+databaseChangeLog:
+  - changeSet:
+      id: idempotency-record-1-postgresql
+      author: idempotency-kit
+      dbms: postgresql
+      changes:
+        - sqlFile:
+            path: schema-postgresql.sql
+            relativeToChangelogFile: true
+  - changeSet:
+      id: idempotency-record-1-mysql
+      author: idempotency-kit
+      dbms: mysql
+      changes:
+        - sqlFile:
+            path: schema-mysql.sql
+            relativeToChangelogFile: true
+  - changeSet:
+      id: idempotency-record-1-mariadb
+      author: idempotency-kit
+      dbms: mariadb
+      changes:
+        - sqlFile:
+            path: schema-mariadb.sql
+            relativeToChangelogFile: true
+  - changeSet:
+      id: idempotency-record-1-oracle
+      author: idempotency-kit
+      dbms: oracle
+      changes:
+        - sqlFile:
+            path: schema-oracle.sql
+            relativeToChangelogFile: true
+  - changeSet:
+      id: idempotency-record-1-mssql
+      author: idempotency-kit
+      dbms: mssql
+      changes:
+        - sqlFile:
+            path: schema-sqlserver.sql
+            relativeToChangelogFile: true

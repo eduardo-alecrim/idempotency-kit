@@ -3,10 +3,6 @@ package io.github.eduardoalecrim.idempotency.store.jdbc;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.UncheckedIOException;
-import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -14,7 +10,6 @@ import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -84,32 +79,24 @@ enum TestDatabase {
         config.setPassword(database.getPassword());
         config.setMaximumPoolSize(16);
         HikariDataSource dataSource = new HikariDataSource(config);
-        createSchema(dataSource);
+        JdbcSchema.createIfMissing(dataSource, dialect, JdbcIdempotencyStore.DEFAULT_TABLE_NAME);
         STARTED.put(this, dataSource);
         return dataSource;
     }
 
-    private void createSchema(DataSource dataSource) {
-        String script = script("db/idempotency/schema-" + name().toLowerCase(Locale.ROOT) + ".sql");
-        try (Connection connection = dataSource.getConnection();
+    /** Creates an empty PostgreSQL schema and returns a data source whose current schema it is. Close it after use. */
+    static HikariDataSource freshPostgreSqlSchema(String schema) throws SQLException {
+        HikariDataSource shared = (HikariDataSource) POSTGRESQL.dataSource();
+        try (Connection connection = shared.getConnection();
                 Statement statement = connection.createStatement()) {
-            for (String sql : script.split(";\n", -1)) {
-                String trimmed = sql.trim();
-                if (!trimmed.isEmpty()) {
-                    statement.execute(trimmed);
-                }
-            }
-        } catch (SQLException e) {
-            throw new IllegalStateException("Cannot create the schema on " + this, e);
+            statement.execute("CREATE SCHEMA " + schema);
         }
-    }
-
-    private static String script(String path) {
-        try (InputStream in =
-                Objects.requireNonNull(TestDatabase.class.getClassLoader().getResourceAsStream(path))) {
-            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
+        HikariConfig config = new HikariConfig();
+        String url = shared.getJdbcUrl();
+        config.setJdbcUrl(url + (url.contains("?") ? "&" : "?") + "currentSchema=" + schema);
+        config.setUsername(shared.getUsername());
+        config.setPassword(shared.getPassword());
+        config.setMaximumPoolSize(2);
+        return new HikariDataSource(config);
     }
 }

@@ -88,6 +88,9 @@
     <ojdbc11.version>23.26.3.0.0</ojdbc11.version>
     <mssql-jdbc.version>13.6.1.jre11</mssql-jdbc.version>
     <hikaricp.version>7.1.0</hikaricp.version>
+    <!-- Migration tools, to test the shipped changelog and scripts -->
+    <liquibase.version>5.0.4</liquibase.version>
+    <flyway.version>13.10.3</flyway.version>
 
     <!-- Plugins -->
     <maven-clean-plugin.version>3.5.0</maven-clean-plugin.version>

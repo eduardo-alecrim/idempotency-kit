@@ -83,5 +83,14 @@ class JdbcStoreContractTest {
                             .dialect())
                     .isEqualTo(database.dialect());
         }
+
+        @Test
+        @DisplayName("FR-25: the table from the shipped script passes validation")
+        void validatesTheShippedSchema() {
+            assertThat(JdbcSchema.problems(database.dataSource(), JdbcIdempotencyStore.DEFAULT_TABLE_NAME))
+                    .isEmpty();
+            assertThat(JdbcSchema.problems(database.dataSource(), "no_such_table"))
+                    .containsExactly("table no_such_table does not exist");
+        }
     }
 }

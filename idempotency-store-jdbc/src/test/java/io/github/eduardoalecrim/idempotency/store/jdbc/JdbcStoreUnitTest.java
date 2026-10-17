@@ -64,6 +64,26 @@ class JdbcStoreUnitTest {
     }
 
     @Test
+    void splitsShippedScriptsIntoStatements() {
+        String script = "-- comment\nCREATE TABLE t (\n    a INT,\n    b INT\n);\n\nCREATE INDEX i ON t (a);\n";
+
+        assertThat(JdbcSchema.statements(script))
+                .containsExactly("CREATE TABLE t (\n    a INT,\n    b INT\n)", "CREATE INDEX i ON t (a)");
+    }
+
+    @ParameterizedTest
+    @CsvSource({"POSTGRESQL, schema-postgresql.sql", "SQLSERVER, schema-sqlserver.sql"})
+    void namesTheScriptOfEachDialect(JdbcDialect dialect, String file) {
+        assertThat(JdbcSchema.scriptPath(dialect)).isEqualTo("db/idempotency/" + file);
+    }
+
+    @Test
+    void createsOnlyUnqualifiedTables() {
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> JdbcSchema.createIfMissing(new NoDataSource(), JdbcDialect.POSTGRESQL, "app.t"));
+    }
+
+    @Test
     void rejectsNonPositiveTimeouts() {
         assertThatIllegalArgumentException()
                 .isThrownBy(
