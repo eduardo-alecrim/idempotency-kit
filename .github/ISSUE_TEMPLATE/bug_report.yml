@@ -1,0 +1,51 @@
+name: Bug report
+description: The library does not behave as the specification says.
+labels: [bug]
+body:
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Request, response and logs. Remove idempotency keys and bodies that carry personal data.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: Name the requirement if one applies, for example FR-06.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How to reproduce
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: idempotency-kit version
+    validations:
+      required: true
+  - type: dropdown
+    id: framework
+    attributes:
+      label: Framework
+      options:
+        - Spring Boot
+        - Quarkus
+        - Plain Java
+    validations:
+      required: true
+  - type: dropdown
+    id: store
+    attributes:
+      label: Store
+      options:
+        - In-memory
+        - JDBC
+        - Redis or Valkey
+        - Custom
+    validations:
+      required: true
