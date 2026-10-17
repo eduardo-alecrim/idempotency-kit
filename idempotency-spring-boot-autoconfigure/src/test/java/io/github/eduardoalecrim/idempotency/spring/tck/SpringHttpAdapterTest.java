@@ -1,24 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.eduardoalecrim.idempotency.spring.tck;
 
+import io.github.eduardoalecrim.idempotency.tck.HttpAdapterContract;
+import io.github.eduardoalecrim.idempotency.tck.MutableClock;
 import java.net.URI;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 
-/** The HTTP behaviour table against the Spring MVC adapter, with the default fail-closed store policy. */
+/** The HTTP adapter contract against the Spring MVC adapter, with the default fail-closed store policy. */
 @SpringBootTest(
         classes = TckApplication.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {"idempotency.request.max-body-size=1KB", "idempotency.response.max-body-size=1KB"})
-class SpringHttpBehaviourTest extends HttpBehaviourContract {
+class SpringHttpAdapterTest extends HttpAdapterContract {
 
     @LocalServerPort
     int port;
 
     @Autowired
-    TckApplication.TestClock clock;
+    MutableClock clock;
 
     @Autowired
     TckApplication.ControllableStore store;
