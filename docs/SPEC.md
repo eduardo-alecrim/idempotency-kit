@@ -1,8 +1,8 @@
 # idempotency-kit — Specification
 
-idempotency-kit makes unsafe HTTP operations safe to retry. A client sends an `Idempotency-Key` header with a `POST` or `PATCH`; the first request runs, its outcome is stored, and every retry with the same key gets the stored response instead of running the operation again. The library implements the semantics of the IETF HTTPAPI draft *The Idempotency-Key HTTP Header Field* in a framework-free core, ships a Spring Boot starter and a Quarkus extension on top of it, and stores records in a relational database (PostgreSQL, MySQL/MariaDB, Oracle, SQL Server) or in Redis. One test compatibility kit (TCK) proves that every store and every adapter behaves the same way.
+idempotency-kit makes unsafe HTTP operations safe to retry. A client sends an `Idempotency-Key` header with a `POST` or `PATCH`; the first request runs, its response is stored, and every retry with the same key gets the stored response instead of running the operation again. The library implements the semantics of the IETF HTTPAPI draft *The Idempotency-Key HTTP Header Field* (revision 07) in a framework-free core, ships a Spring Boot starter and a Quarkus extension on top of it, and stores records in a relational database (PostgreSQL, MySQL/MariaDB, Oracle, SQL Server) or in Redis. One test compatibility kit (TCK) proves that every store and every adapter behaves the same way.
 
-> **Status:** specification · **Last updated:** 2026-10-13
+> **Status:** specification · **Last updated:** 2026-10-17
 
 ## Contents
 
@@ -27,17 +27,17 @@ idempotency-kit makes unsafe HTTP operations safe to retry. A client sends an `I
 
 ## How to use this document
 
-- Each milestone in [§13](#13-roadmap) becomes a GitHub milestone, and each `- [ ]` task becomes an issue labelled with its module (`core`, `store-jdbc`, `store-redis`, `spring`, `quarkus`, `client`, `tck`, `docs`, `build`).
+- Each milestone in [§13](#13-roadmap) is a GitHub milestone. Its work is tracked as issues sized for one pull request and labelled with their module (`core`, `store-jdbc`, `store-redis`, `spring`, `quarkus`, `client`, `tck`, `docs`, `build`).
 - One branch and one pull request per issue (`feat/m2-jdbc-claim`), squash-merged into `main`. Commit messages follow Conventional Commits with the module as scope: `feat(core): parse Structured Field keys`, `fix(store-jdbc): map SQL Server duplicate-key errors`. The release changelog is generated from them.
 - Requirements carry stable IDs (`FR-06`, `NFR-03`). Tests that prove a requirement name it in `@DisplayName`, and pull requests reference it, so every requirement traces to code and tests.
-- Every decision in [§7.2](#72-architecture-decisions) is recorded as an ADR in `docs/adr` during M0 (`0002-framework-free-core.md`, …). Changing a decision means a new ADR that supersedes the old one, not an edit.
+- Terms are defined in [GLOSSARY.md](../GLOSSARY.md), and decisions are recorded as ADRs in [`docs/adr`](adr), indexed in [§7.2](#72-architecture-decisions). Both are the source of truth; this document links to them. Changing a decision means a new ADR that supersedes the old one, not an edit.
 - This document changes through pull requests like the code does.
 
 ## 1. Why this project
 
 Clients retry. A mobile app loses its connection after sending `POST /payments`, a gateway times out at 30 seconds while the backend finishes at 31, a message-driven integration redelivers. When the operation is not idempotent, every retry creates another order, another payment, another authorization request. The usual fixes are written per service and get the hard parts wrong: two concurrent retries both execute because the check and the insert are not atomic; a `500` is stored and replayed forever; keys are not scoped by client, so one client can read another client's response; the same key is silently accepted with a different payload.
 
-The IETF HTTPAPI working group is standardising the `Idempotency-Key` header and its error semantics. idempotency-kit implements that behaviour once, with an atomic claim protocol, leases for crashed requests, and storage that works on the databases Java teams already run.
+The IETF HTTPAPI working group drafted the `Idempotency-Key` header and its error semantics; the last revision, draft-07, expired without becoming an RFC and is what this library implements. idempotency-kit implements that behaviour once, with an atomic claim protocol, leases for crashed requests, and storage that works on the databases Java teams already run.
 
 | Skill area | Where it shows up |
 |---|---|
@@ -46,7 +46,7 @@ The IETF HTTPAPI working group is standardising the `Idempotency-Key` header and
 | Library and API design | Framework-free core, small public surface, SPIs, sealed result types, SemVer, API compatibility checks with japicmp |
 | Spring Boot internals | Auto-configuration and conditions, `@ConfigurationProperties` metadata, servlet filter ordering against Spring Security, Actuator, Micrometer Observation |
 | Quarkus internals | Runtime/deployment split, build steps over the Jandex index, bytecode recording, Quarkus REST filters, Dev UI, GraalVM native image |
-| Storage | Portable SQL on four vendors, conditional single-statement updates, schema delivery for Flyway and Liquibase, batched purge; Redis `SET NX PX` claims, Lua compare-and-set, TTL expiry |
+| Storage | Portable SQL on four vendors, conditional single-statement updates, schema delivery for Flyway and Liquibase, batched purge; Redis Lua claims and compare-and-set on the application clock |
 | Testing | TCK shared by every store and adapter, jqwik property tests, Testcontainers matrix, mutation testing, JMH |
 | Release engineering | Maven Central through the Central Portal, JReleaser, GPG signing, SBOM, build provenance, reproducible builds, versioned docs |
 | Security | Client-scoped keys, header denylist on replay, optional AES-GCM encryption of stored bodies, no keys or bodies in logs |
@@ -64,7 +64,7 @@ The IETF HTTPAPI working group is standardising the `Idempotency-Key` header and
 
 **Non-goals**
 
-- Exactly-once business effects. The library prevents duplicate execution of the HTTP handler; it does not make the handler's database writes and the record completion one transaction ([D-03](#d-03-records-live-outside-the-business-transaction)).
+- Exactly-once business effects. The library prevents duplicate execution of the HTTP handler; it does not make the handler's database writes and the record completion one transaction ([ADR 0004](adr/0004-records-outside-the-business-transaction.md)).
 - Idempotency for message consumers (Kafka, JMS). That is the inbox pattern and a different problem.
 - Spring Boot 3, Java EE / `javax.*`, or JAX-RS runtimes other than Quarkus REST before 1.0.
 - Caching `GET` responses. `@Idempotent` on safe methods is rejected.
@@ -73,21 +73,7 @@ The IETF HTTPAPI working group is standardising the `Idempotency-Key` header and
 
 ### 3.1 Glossary
 
-| Term | Meaning |
-|---|---|
-| Idempotency key | The value of the `Idempotency-Key` request header, chosen by the client, unique per logical operation. |
-| Idempotent operation | An endpoint that `@Idempotent` or a configured route marks as key-aware. |
-| Client identity | Who sent the request: the authenticated principal name, a configured header, or `anonymous`. |
-| Scope key | `SHA-256(clientIdentity, method, routeTemplate, idempotencyKey)` as 64 hex characters; the primary key of a record. |
-| Fingerprint | `SHA-256` over the method, route template, media type, selected headers and canonicalized body; detects key reuse with a different payload. |
-| Record | What a store keeps per scope key: state, fingerprint, owner token, lease, stored response, timestamps. |
-| Claim | The atomic operation that creates an `IN_PROGRESS` record or reports the existing one. |
-| Lease | How long an `IN_PROGRESS` record protects a running request; an expired lease counts as no record. |
-| Owner token | A random UUID issued by a successful claim; `complete` and `release` succeed only with it. |
-| TTL | How long a `COMPLETED` record is kept and replayed. |
-| Storable outcome | A response status the policy remembers: `2xx` and `4xx` except `408`, `425`, `429` by default. |
-| Adapter | The framework integration: Spring MVC filter, Quarkus REST filters, later WebFlux. |
-| TCK | `idempotency-test-kit`: abstract tests every store and adapter must pass. |
+Terms are defined in [GLOSSARY.md](../GLOSSARY.md), and this document uses them with exactly those meanings. The mechanics behind them are below: the fingerprint in [§3.4](#34-what-counts-as-the-same-request), the scope key in [ADR 0007](adr/0007-scope-key-is-a-hash.md), and claims, leases and owner tokens in [§5.7](#57-store-operations).
 
 ### 3.2 The header
 
@@ -100,10 +86,10 @@ The IETF HTTPAPI working group is standardising the `Idempotency-Key` header and
 ### 3.3 Request lifecycle
 
 1. The adapter decides whether the request targets an idempotent operation (annotation or configured route, method in `methods`). If not, it does nothing.
-2. It reads the key. No key on a required operation answers `400 missing-key`; no key on an optional operation runs the handler without idempotency.
+2. It reads the key. No key on a required operation answers `400 missing-key`; no key on an optional operation is a bypass: the handler runs without idempotency.
 3. It buffers the request body up to `request.max-body-size` and computes the fingerprint, then the scope key.
-4. It claims the scope key in the store with `lease` and `ttl`.
-5. **Acquired** — the handler runs. Afterwards, a storable outcome is written with `complete`; a non-storable outcome or an exception calls `release`, so a retry runs again.
+4. It claims the scope key in the store with the operation's `lease` and `ttl`.
+5. **Acquired** — the handler runs. Afterwards, a response with a storable status is written with `complete`; any other status or an exception calls `release`, so a retry runs again. If `complete` or `release` fails, the handler's response is still sent (FR-40).
 6. **Existing record, different fingerprint** — `422 key-reuse`, whatever the record state.
 7. **Existing `IN_PROGRESS` record, same fingerprint** — `409 request-in-progress` with `Retry-After` set to the remaining lease in whole seconds (minimum 1).
 8. **Existing `COMPLETED` record, same fingerprint** — the stored status, allowlisted headers and body are written back, with `Idempotent-Replayed: true`. The handler does not run.
@@ -112,20 +98,25 @@ The IETF HTTPAPI working group is standardising the `Idempotency-Key` header and
 
 The default `FingerprintStrategy` hashes, in order and length-prefixed: the method, the route template, the normalized media type (`type/subtype`, lowercase, no parameters), each header listed in `fingerprint.headers` (lowercased name, trimmed values), and the body. JSON bodies (`application/json` and `*/*+json`) are canonicalized with RFC 8785 (JCS) first, so key order and whitespace do not change the fingerprint. A JSON body that fails to parse, and every other media type, is hashed as raw bytes. Applications plug their own strategy per operation.
 
-### 3.5 Which outcomes are remembered
+### 3.5 Which statuses are stored
 
 `2xx` and `4xx` responses are stored by default: a validation error is the answer to that request and must be replayed, not re-evaluated. `5xx`, unhandled exceptions, `408`, `425` and `429` release the claim, because they describe a transient state and the client is expected to retry. Both lists are configurable through `response.store-statuses` and `response.release-statuses`.
 
 ### 3.6 Expiry policy and its publication
 
-A `COMPLETED` record is replayed until `ttl` elapses (default 24 hours, overridable per operation). After that, the key is free and the same request runs again. The draft asks servers to publish this policy; the library publishes it in three places: a startup log line per idempotent route, the Spring Actuator `idempotency` endpoint and Quarkus Dev UI page, and the OpenAPI description of each operation (M5).
+A `COMPLETED` record is replayed until `ttl` elapses (default 24 hours, overridable per operation). After that, the key is free and the same request runs again. The draft asks servers to publish this policy; the library publishes it in three places: a startup log line per idempotent operation, the Spring Actuator `idempotency` endpoint and Quarkus Dev UI page, and the OpenAPI description of each operation (M5).
 
 ### 3.7 Guarantees and limits
 
 - While a record exists, the handler runs at most once per scope key, across threads and instances that share a store.
-- A request that runs longer than `lease` can be taken over by a retry; both executions then complete, and the second `complete` wins only if it still holds the lease. The first one's `complete` returns `false`, is logged at `WARN` and counted as `lease_lost`. `lease` must therefore exceed the longest expected handler time; startup fails if `lease >= ttl`.
+- A request that runs longer than `lease` can be taken over by a retry; both executions then complete, and the second `complete` wins only if it still holds the lease. The first one's `complete` returns `false`, is logged at `WARN` and counted as `lease_lost`. `lease` must therefore exceed the longest expected handler time of its operation, which is why it can be set per operation; startup fails if any operation has `lease >= ttl`.
 - A crash between the handler's commit and `complete` leaves an `IN_PROGRESS` record; after the lease expires, a retry runs again. Handlers that cannot tolerate this keep their own natural idempotency (unique business keys).
-- Timestamps come from the application's `Clock`, not the database. Instance clocks must be synchronised (NTP); the lease must be larger than the worst clock skew.
+- Timestamps come from the application's `Clock`, not the database or Redis ([ADR 0006](adr/0006-time-from-the-application-clock.md)). Instance clocks must be synchronised (NTP); the lease must be larger than the worst clock skew.
+- If the store fails after the handler ran, the handler's response is still sent, because its effects already happened. The record stays `IN_PROGRESS` until its lease ends, so a retry gets `409` until then and runs again afterwards (FR-40).
+
+### 3.8 Scoping and anonymous clients
+
+Under client scope, a request without a client identity belongs to the anonymous client, so every unauthenticated caller shares one namespace: whoever learns a key can replay its response, or see `422` for a different payload. On such operations the key is the only secret. Public operations should use `key.format=uuid` so that keys carry 122 random bits, and operations whose keys are shared by design should declare `scope = GLOBAL`.
 
 ## 4. Functional requirements
 
@@ -139,24 +130,24 @@ A `COMPLETED` record is replayed until `ttl` elapses (default 24 hours, overrida
 
 ### 4.2 Execution and replay
 
-- **FR-04 First execution.** A request with a new key claims it, runs the handler once, and stores the response when the outcome is storable.
+- **FR-04 First execution.** A request with a new key claims it, runs the handler once, and stores the response when its status is storable.
 - **FR-05 Replay.**
   - *Given* a `COMPLETED` record for key K with fingerprint F, *when* a request with K and fingerprint F arrives before the TTL elapses, *then* the response has the stored status, the stored body byte for byte, the allowlisted headers and `Idempotent-Replayed: true`, and the handler execution count stays the same.
-- **FR-06 Payload mismatch.**
+- **FR-06 Key reuse.**
   - *Given* any record for key K with fingerprint F, *when* a request with K and a fingerprint other than F arrives, *then* the response is `422 key-reuse` and the record is unchanged.
 - **FR-07 Request in progress.**
   - *Given* an `IN_PROGRESS` record for K whose lease ends in 12.3 seconds, *when* a retry with the same fingerprint arrives, *then* the response is `409 request-in-progress` with `Retry-After: 13`, and the first request still completes normally.
-- **FR-08 Transient outcomes release the key.**
+- **FR-08 Transient responses release the key.**
   - *Given* a handler that returns `503` or throws, *when* the request completes, *then* no record remains and a retry with the same key runs the handler again.
 - **FR-09 Lease expiry.**
   - *Given* an `IN_PROGRESS` record whose lease has expired, *when* a retry arrives with any fingerprint, *then* it acquires a new claim with a new owner token and the handler runs; a late `complete` from the old owner returns `false` and changes nothing.
 - **FR-10 TTL expiry.** After `ttl`, a request with the same key runs as new, with any fingerprint.
 - **FR-11 Concurrency.**
-  - *Given* 64 concurrent requests with the same key and body against two application instances sharing one store, *when* they all finish, *then* the handler ran exactly once and every response is either the original outcome (status and body) or `409 request-in-progress`.
+  - *Given* 64 concurrent requests with the same key and body against two application instances sharing one store, *when* they all finish, *then* the handler ran exactly once and every response is either the original response (status and body) or `409 request-in-progress`.
 
 ### 4.3 Scoping and fingerprinting
 
-- **FR-12 Client scope.** The same key sent by two different client identities produces two independent records; neither can replay the other's response. `@Idempotent(scope = GLOBAL)` drops the client from the scope key for server-to-server keys.
+- **FR-12 Client scope.** The same key sent by two different client identities produces two independent records; neither can replay the other's response. `@Idempotent(scope = GLOBAL)` drops the client from the scope key for server-to-server keys. Requests without an identity share the anonymous client ([§3.8](#38-scoping-and-anonymous-clients)).
 - **FR-13 Route scope.** The same key on two different route templates or methods produces two independent records.
 - **FR-14 Fingerprint stability.** JSON bodies that differ only in key order, insignificant whitespace or number representation that JCS normalizes produce the same fingerprint; any change in a value, the route, the media type or a selected header changes it.
 - **FR-15 Pluggable fingerprint.** `@Idempotent(fingerprint = MyStrategy.class)` uses the given strategy, instantiated through the framework's container when it is a bean, otherwise through its no-argument constructor.
@@ -164,11 +155,13 @@ A `COMPLETED` record is replayed until `ttl` elapses (default 24 hours, overrida
 ### 4.4 Applicability and limits
 
 - **FR-16 Methods.** By default only `POST` and `PATCH` are key-aware; `methods` extends this to `PUT` and `DELETE`. `@Idempotent` on a `GET`, `HEAD`, `OPTIONS` or `TRACE` handler fails application startup (Spring) or the build (Quarkus) with a message naming the handler.
-- **FR-17 Configured routes.** Routes listed under `routes` (method, path pattern, TTL, required) are idempotent without annotations, for code the application does not own.
+- **FR-17 Configured routes.** Routes listed under `routes` (method, path pattern, TTL, lease, required) are idempotent without annotations, for code the application does not own.
 - **FR-18 Request size.** A body larger than `request.max-body-size` on an idempotent operation answers `413 request-too-large` before the handler runs.
 - **FR-19 Response size.** A storable response larger than `response.max-body-size` is stored without its body (`body_omitted = true`) under the default `response.oversized=store-without-body`, and its replays carry the status and allowlisted headers with an empty body; `response.oversized=release` releases the claim instead. Either case logs one `WARN` per route.
 - **FR-20 Unsupported handlers.** Streaming and asynchronous handlers (`SseEmitter`, `StreamingResponseBody`, `DeferredResult`, `Callable`, `Flux`, `Multi`) marked idempotent fail startup or the build. Reactive return types (`Mono`, `Uni`, `CompletionStage`) are rejected until M7.
-- **FR-21 Store failure.** When the store throws or times out (`store.timeout`, default 2 s), `store.on-failure=fail-closed` (default) answers `503 store-unavailable` with `Retry-After: 1` and does not run the handler; `fail-open` runs the handler without idempotency and counts the bypass.
+- **FR-21 Store failure.** When the store throws or times out (`store.timeout`, default 2 s), `store.on-failure=fail-closed` (default) answers `503 store-unavailable` with `Retry-After: 1` and does not run the handler; `fail-open` runs the handler as a bypass, reported with outcome `fail_open`.
+- **FR-40 Store failure after the handler.**
+  - *Given* a handler that returned `201`, *when* `complete` throws or exceeds `store.timeout`, *then* the client receives the `201` and its body, a `WARN` is logged, `idempotency.store.calls` records `result=error`, and a retry before the lease ends gets `409 request-in-progress`. A failed `release` is handled the same way.
 
 ### 4.5 Errors
 
@@ -180,7 +173,7 @@ A `COMPLETED` record is replayed until `ttl` elapses (default 24 hours, overrida
 - **FR-24 JDBC store.** Implements the SPI on PostgreSQL, MySQL, MariaDB, Oracle and SQL Server with the dialect detected from `DatabaseMetaData` or set explicitly. It uses its own auto-commit connections from the configured `DataSource`.
 - **FR-25 Schema delivery.** The JDBC module ships vendor DDL (`db/idempotency/schema-{vendor}.sql`), a Liquibase changelog (`db/idempotency/changelog.yaml`) to include from the application's master changelog, and Flyway-compatible copies of the DDL. With `store.jdbc.validate-schema=true` (default) startup fails with the script path when the table or a column is missing.
 - **FR-26 Purge.** A scheduled job deletes expired records in batches of `store.jdbc.cleanup.batch-size` every `store.jdbc.cleanup.interval`; concurrent purges on several instances are safe.
-- **FR-27 Redis store.** Implements the SPI with `SET NX PX` claims, Lua compare-and-set for `complete` and `release`, and Redis TTLs for expiry; it needs no purge job and works on Redis Cluster because every operation touches one key.
+- **FR-27 Redis store.** Implements the SPI with Lua scripts for `claim`, `complete` and `release` that decide expiry from the application clock ([ADR 0006](adr/0006-time-from-the-application-clock.md)); key expiry only bounds memory, so it needs no purge job, and it works on Redis Cluster because every script touches one key.
 
 ### 4.7 Adapters
 
@@ -201,7 +194,7 @@ A `COMPLETED` record is replayed until `ttl` elapses (default 24 hours, overrida
 - **FR-36 OpenAPI.** When springdoc-openapi or SmallRye OpenAPI is present, each idempotent operation documents the `Idempotency-Key` header (required or optional), the `400`, `409`, `422` responses and its TTL.
 - **FR-37 Header denylist.** `Set-Cookie`, `Authorization`, `Proxy-Authenticate`, `WWW-Authenticate` and hop-by-hop headers are never stored or replayed; configuring them in `response.replay-headers` fails startup.
 - **FR-38 Body encryption.** With `encryption.enabled=true`, stored bodies are encrypted with AES-256-GCM under the active key id; records written under older key ids remain readable while their key is configured.
-- **FR-39 Inspection.** The Spring Actuator endpoint `idempotency` and the Quarkus Dev UI page list idempotent routes with their policy; the Dev UI page (dev mode only) also lists the 50 most recent records without bodies.
+- **FR-39 Inspection.** The Spring Actuator endpoint `idempotency` and the Quarkus Dev UI page list idempotent operations with their policy; the Dev UI page (dev mode only) also lists the 50 most recent records without bodies.
 
 ## 5. Architecture
 
@@ -234,14 +227,14 @@ flowchart TB
     bom -.->|"manages versions"| core
 ```
 
-`idempotency-core` has no runtime dependencies ([D-02](#d-02-zero-runtime-dependencies-in-core)). Framework modules depend on the core, never the other way round. The Quarkus extension implements its Redis store on the Quarkus Redis client instead of depending on `idempotency-store-redis` ([D-10](#d-10-quarkus-uses-its-own-redis-client)).
+`idempotency-core` has no runtime dependencies ([ADR 0003](adr/0003-zero-runtime-dependencies-in-core.md)). Framework modules depend on the core, never the other way round. The Quarkus extension implements its Redis store on the Quarkus Redis client instead of depending on `idempotency-store-redis` ([ADR 0011](adr/0011-quarkus-uses-its-own-redis-client.md)).
 
 ### 5.2 Engine pipeline
 
 `IdempotencyEngine` is the only place where the protocol lives. Adapters translate their request and response types into `IncomingRequest` and `CapturedResponse` and act on the returned `Decision`:
 
 1. `begin(IncomingRequest, IdempotencyPolicy)` parses the key, checks limits, computes fingerprint and scope key, and calls `store.claim(...)`.
-2. It returns one of `Decision.Bypass` (no key, optional operation), `Decision.Proceed` (claim acquired), `Decision.Replay` (stored response) or `Decision.Reject` (problem plus headers such as `Retry-After`).
+2. It returns one of `Decision.Bypass` (reason `NO_KEY` for an optional operation without a key, or `FAIL_OPEN` when the store failed under fail-open), `Decision.Proceed` (claim acquired), `Decision.Replay` (stored response) or `Decision.Reject` (problem plus headers such as `Retry-After`).
 3. After the handler, the adapter calls `finish(proceed, capturedResponse)`, which applies the status policy and calls `complete` or `release`; on an exception it calls `abort(proceed, cause)`, which releases.
 4. Every step reports to `IdempotencyObserver`.
 
@@ -319,14 +312,14 @@ sequenceDiagram
 stateDiagram-v2
     [*] --> Absent
     Absent --> InProgress : claim acquired
-    InProgress --> Completed : complete with a storable outcome
+    InProgress --> Completed : complete with a storable status
     InProgress --> Absent : release on 5xx, exception or non-storable status
     InProgress --> InProgress : takeover after the lease expires
     Completed --> Absent : TTL elapsed
     Absent --> [*]
 ```
 
-An expired lease and an expired TTL are both equivalent to `Absent` in every store ([D-07](#d-07-an-expired-record-is-an-absent-record)); the physical row may linger until the purge job runs.
+An expired lease and an expired TTL are both equivalent to `Absent` in every store ([ADR 0008](adr/0008-expired-record-is-absent.md)); the physical row may linger until the purge job runs.
 
 ### 5.5 Spring Boot adapter
 
@@ -340,8 +333,8 @@ An expired lease and an expired TTL are both equivalent to `Absent` in every sto
 
 ### 5.6 Quarkus extension
 
-- **Deployment module.** `IdempotencyProcessor` build steps: register the feature `idempotency`; scan the combined Jandex index for `@Idempotent` and produce `IdempotentEndpointBuildItem`s with method, route template (application path, class `@Path` and method `@Path` joined) and policy; validate handlers (FR-16, FR-20) and fail the build with the offending method; select the store from `quarkus.idempotency.store.type` and the available capabilities (Agroal data source, Quarkus Redis client); register reflection for the problem payload; contribute the health check and the Dev UI card.
-- **Runtime module.** `IdempotencyRecorder` turns the build items into an endpoint registry at static init. `IdempotencyServerFilters` holds a `@ServerRequestFilter` (key, body, claim, reject/replay) and a `@ServerResponseFilter` (complete for responses without an entity). `IdempotencyWriterInterceptor` tees the serialized entity into a bounded buffer and completes after `proceed()`.
+- **Deployment module.** `IdempotencyProcessor` build steps: register the feature `idempotency`; scan the combined Jandex index for `@Idempotent` and produce `IdempotentOperationBuildItem`s with method, route template (application path, class `@Path` and method `@Path` joined) and policy; validate handlers (FR-16, FR-20) and fail the build with the offending method; select the store from `quarkus.idempotency.store.type` and the available capabilities (Agroal data source, Quarkus Redis client); register reflection for the problem payload; contribute the health check and the Dev UI card.
+- **Runtime module.** `IdempotencyRecorder` turns the build items into an operation registry at static init. `IdempotencyServerFilters` holds a `@ServerRequestFilter` (key, body, claim, reject/replay) and a `@ServerResponseFilter` (complete for responses without an entity). `IdempotencyWriterInterceptor` tees the serialized entity into a bounded buffer and completes after `proceed()`.
 - **Threading.** Store calls are blocking. The filters use the default `nonBlocking = false`, so they run on the endpoint's execution thread (worker or virtual thread), never on the event loop. An integration test asserts `!io.vertx.core.Context.isOnEventLoopThread()` inside the store.
 
 ### 5.7 Store operations
@@ -355,17 +348,17 @@ An expired lease and an expired TTL are both equivalent to `Absent` in every sto
 | `release` | `DELETE … WHERE scope_key=? AND owner_token=? AND state='IN_PROGRESS'` |
 | `purgeExpired` | Dialect-specific bounded delete of rows with `expires_at < ?` (for example a `scope_key IN (SELECT … FETCH FIRST ? ROWS ONLY)` subquery), repeated until a batch deletes fewer rows than the batch size. |
 
-**Redis** (key `{prefix}{scopeKey}`, value = 1 state byte `P`/`C` + 36-character owner token + encoded record):
+**Redis** (key `{prefix}{scopeKey}`). The value starts with a fixed-width header: one state byte `P`/`C`, the 36-character owner token (blank once completed), and the lease end and expiry as 13-digit epoch milliseconds; the encoded record follows. Every operation is a Lua script that receives the application's `now` and decides expiry from the header, never from the Redis clock ([ADR 0006](adr/0006-time-from-the-application-clock.md)). The key's `PX` expiry only bounds memory: the lease end or expiry plus a fixed margin.
 
-| Operation | Commands |
+| Operation | Script |
 |---|---|
-| `claim` | `SET key value NX PX <lease ms>`; `OK` means `Acquired`. Otherwise `GET key`; a `nil` (expired in between) retries the `SET`, at most three rounds. |
-| `complete` | Lua: if the value starts with `P` followed by the caller's token, `SET key completedValue PX <ttl ms>` and return 1; else return 0. |
-| `release` | Lua: if the value starts with `P` followed by the caller's token, `DEL key`. |
-| `purgeExpired` | No-op; Redis expires keys. |
+| `claim` | If the key is missing, holds `P` with a lease end before `now`, or has an expiry before `now`: `SET` the new in-progress value with `PX` and return `Acquired`. Otherwise return the stored value as `Existing`. |
+| `complete` | If the value starts with `P` and the caller's token, `SET` the completed value with `PX` and return 1; else return 0. |
+| `release` | If the value starts with `P` and the caller's token, `DEL` the key. |
+| `purgeExpired` | No-op; key expiry bounds memory. |
 
 ```lua
--- complete.lua: KEYS[1] record key, ARGV[1] owner token, ARGV[2] completed value, ARGV[3] ttl in ms
+-- complete.lua: KEYS[1] record key, ARGV[1] owner token, ARGV[2] completed value, ARGV[3] PX in ms
 local v = redis.call('GET', KEYS[1])
 if v and string.sub(v, 1, 1) == 'P' and string.sub(v, 2, 37) == ARGV[1] then
   redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
@@ -391,6 +384,8 @@ public @interface Idempotent {
     boolean required() default true;
     /** "24h", "30m", "90s", "7d" or ISO-8601 ("PT24H"); empty means the global default. */
     String ttl() default "";
+    /** Lease of in-progress records, in the same formats; empty means the global default. */
+    String lease() default "";
     /** CLIENT scopes keys by client identity; GLOBAL shares them across clients. */
     Scope scope() default Scope.CLIENT;
     /** Strategy used to fingerprint the request. */
@@ -415,11 +410,13 @@ public final class IdempotencyEngine {
 }
 
 public sealed interface Decision {
-    record Bypass() implements Decision {}
+    record Bypass(BypassReason reason) implements Decision {}
     record Proceed(ScopeKey key, OwnerToken token, IdempotencyPolicy policy) implements Decision {}
     record Replay(StoredResponse response) implements Decision {}
     record Reject(Problem problem, Map<String, String> headers) implements Decision {}
 }
+
+public enum BypassReason { NO_KEY, FAIL_OPEN }
 
 public record IdempotencyPolicy(boolean required, Duration ttl, Duration lease, Scope scope,
                                 FingerprintStrategy fingerprint, List<String> fingerprintHeaders,
@@ -469,8 +466,8 @@ public interface IdempotencyObserver {
     default void onLeaseLost(RouteRef route) {}
 }
 
-public enum Outcome { EXECUTED, REPLAYED, CONFLICT, MISMATCH, MISSING_KEY, INVALID_KEY,
-                      TOO_LARGE, RELEASED, STORE_UNAVAILABLE, BYPASSED }
+public enum Outcome { EXECUTED, REPLAYED, IN_PROGRESS, KEY_REUSE, MISSING_KEY, INVALID_KEY,
+                      REQUEST_TOO_LARGE, RELEASED, STORE_UNAVAILABLE, NO_KEY, FAIL_OPEN }
 ```
 
 Value types (`ScopeKey`, `OwnerToken`, `Fingerprint`, `StoredResponse`, `IdempotencyRecord`) are records with validating constructors. Stores receive only computed values; they never parse keys or bodies.
@@ -486,7 +483,7 @@ Value types (`ScopeKey`, `OwnerToken`, `Fingerprint`, `StoredResponse`, `Idempot
 | `idempotency.key.max-length` | `255` | Maximum key length after unescaping. |
 | `idempotency.key.format` | `any` | `any` or `uuid`. |
 | `idempotency.default-ttl` | `24h` | TTL of completed records. |
-| `idempotency.lease` | `30s` | Lease of in-progress records; must be shorter than every TTL. |
+| `idempotency.lease` | `30s` | Default lease of in-progress records, overridable per operation; must be shorter than the operation's TTL. |
 | `idempotency.client-identity.source` | `principal` | `principal`, `header` or `none`. |
 | `idempotency.client-identity.header` | — | Header used when the source is `header`. |
 | `idempotency.fingerprint.headers` | `[]` | Headers added to every fingerprint. |
@@ -511,7 +508,7 @@ Value types (`ScopeKey`, `OwnerToken`, `Fingerprint`, `StoredResponse`, `Idempot
 | `idempotency.store.redis.key-prefix` | `idem:` | Prefix of every key. |
 | `idempotency.store.in-memory.max-entries` | `10000` | Upper bound of the in-memory store. |
 | `idempotency.encryption.enabled` / `.active-key-id` / `.keys.<id>` | `false` / — / — | Encrypt stored bodies (FR-38) with Base64 AES-256 keys by id; new records use the active id. |
-| `idempotency.routes[n].methods` / `.path` / `.ttl` / `.required` | — | Routes made idempotent without annotations (FR-17). |
+| `idempotency.routes[n].methods` / `.path` / `.ttl` / `.lease` / `.required` | — | Idempotent operations declared without annotations (FR-17). |
 
 `IdempotencyProperties` is validated with `@Validated`; invalid combinations (`lease >= ttl`, denied replay headers, unknown dialect) fail startup with a `FailureAnalyzer` message.
 
@@ -538,7 +535,7 @@ The Quarkus extension exposes the same keys under `quarkus.idempotency.` through
 | Required operation, no key | `400` | `missing-key` | no | none |
 | Malformed or too long key | `400` | `invalid-key` | no | none |
 | Body over `request.max-body-size` | `413` | `request-too-large` | no | none |
-| New key, storable outcome | handler's | handler's | yes | `COMPLETED` |
+| New key, storable status | handler's | handler's | yes | `COMPLETED` |
 | New key, `5xx`, exception or released status | handler's | handler's | yes | none |
 | Same key, same fingerprint, completed | stored | stored, plus `Idempotent-Replayed: true` | no | unchanged |
 | Same key, different fingerprint | `422` | `key-reuse` | no | unchanged |
@@ -547,6 +544,7 @@ The Quarkus extension exposes the same keys under `quarkus.idempotency.` through
 | Same key after the TTL | handler's | handler's | yes | new record |
 | Store unavailable, `fail-closed` | `503` + `Retry-After: 1` | `store-unavailable` | no | — |
 | Store unavailable, `fail-open` | handler's | handler's | yes | none |
+| Store fails after the handler ran | handler's | handler's | yes | `IN_PROGRESS` until the lease ends |
 
 ### 6.6 Problem types
 
@@ -613,7 +611,7 @@ Type mapping for the other vendors:
 | `body_omitted` | `BOOLEAN` | `NUMBER(1)` (19c compatible) | `BIT` |
 | timestamps | `DATETIME(6)`, always UTC | `TIMESTAMP WITH TIME ZONE` | `DATETIMEOFFSET(6)` |
 
-`response_headers` holds header lines in HTTP/1.1 field syntax (`Name: value`, CRLF-separated); header values cannot contain CR or LF, so the format needs no escaping ([D-15](#d-15-stored-headers-use-http-field-lines)). Redis values use the same fields in a versioned binary encoding (`RecordCodec`, first byte after the state and token is the format version).
+`response_headers` holds header lines in HTTP/1.1 field syntax (`Name: value`, CRLF-separated); header values cannot contain CR or LF, so the format needs no escaping ([ADR 0016](adr/0016-stored-headers-use-http-field-lines.md)). Redis values use the same fields in a versioned binary encoding (`RecordCodec`) after the fixed-width header described in [§5.7](#57-store-operations); the first byte after the header is the format version.
 
 ### 6.8 Metrics and observations
 
@@ -634,81 +632,40 @@ Keys and bodies are never logged at `INFO` or above; `DEBUG` logs print the scop
 | Concern | Choice | Why |
 |---|---|---|
 | Language | Java 17 baseline (`--release 17`), CI on 17, 21, 25 | Minimum of Spring Boot 4 and Quarkus 3; covers every LTS in use. |
-| Build | Maven with wrapper, multi-module, BOM | First-class Quarkus extension tooling; what library consumers expect. |
-| Spring | Spring Boot 4.x, Spring Framework 7, Spring MVC (WebFlux in M7) | Current generation; Jakarta EE 11 APIs. |
-| Quarkus | Quarkus 3.x current LTS, Quarkus REST | LTS gives a support window that matches a library's. |
-| Redis client | Lettuce (plain and Spring), Quarkus Redis client (Quarkus) | Native fit on each side ([D-10](#d-10-quarkus-uses-its-own-redis-client)). |
+| Build | Maven 3.10 with wrapper, multi-module, BOM | First-class Quarkus extension tooling; what library consumers expect. |
+| Spring | Spring Boot 4.1.x, Spring Framework 7, Spring MVC (WebFlux in M7) | Current generation; Jakarta EE 11 APIs. |
+| Quarkus | Quarkus 3.40 LTS, Quarkus REST | LTS gives a support window that matches a library's; 4.x waits for its first LTS ([ADR 0018](adr/0018-quarkus-3-lts-until-a-4x-lts.md)). |
+| Redis client | Lettuce (plain and Spring), Quarkus Redis client (Quarkus) | Native fit on each side ([ADR 0011](adr/0011-quarkus-uses-its-own-redis-client.md)). |
 | Null safety | JSpecify annotations, NullAway through Error Prone | Same annotations Spring Framework 7 uses; nulls caught at compile time. |
-| Formatting | Spotless with palantir-java-format | Deterministic formatting, no review comments about style. |
-| Tests | JUnit 5, AssertJ, jqwik, Testcontainers, Awaitility, PIT, JMH | See [§9](#9-testing-strategy). |
+| Formatting | Spotless with palantir-java-format, SPDX license headers | Deterministic formatting, no review comments about style. |
+| Tests | JUnit 6, AssertJ, jqwik, Testcontainers, Awaitility, PIT, JMH | See [§9](#9-testing-strategy). |
 | Release | JReleaser, Central Portal, GPG, CycloneDX | See [§10](#10-engineering-practices-cicd-and-release). |
 | Docs | MkDocs Material, `mike` for versions | Fast to write, versioned per release. |
 
 ### 7.2 Architecture decisions
 
-#### D-01 Framework-free core with thin adapters
+Decisions are recorded as ADRs in [`docs/adr`](adr). The ADR is the source of truth; a changed decision gets a new ADR that supersedes the old one.
 
-**Decision.** All protocol logic lives in `idempotency-core`; adapters only translate request and response types and act on `Decision`. **Why.** One implementation of the semantics, one TCK, and new adapters (WebFlux, Jakarta REST) cost little. **Alternatives.** A Spring-only library (smaller, but the Quarkus behaviour would drift); AOP around controller methods (cannot see serialized bytes or response headers).
-
-#### D-02 Zero runtime dependencies in core
-
-**Decision.** `idempotency-core` depends on nothing but the JDK. Logging goes through `System.Logger`; JSON canonicalization uses an internal parser in `internal.json`. **Why.** Spring Boot 4 defaults to Jackson 3 while Quarkus 3 is on Jackson 2; binding the core to either would force a version on half the users. `System.Logger` reaches SLF4J through `slf4j-jdk-platform-logging` (declared by the starter) and Quarkus logging through its JUL bridge. Enforced by a `maven-enforcer` banned-dependencies rule. **Alternatives.** Jackson (version conflicts), SLF4J API (an extra dependency for six log statements).
-
-#### D-03 Records live outside the business transaction
-
-**Decision.** The JDBC store uses its own auto-commit connections; claims are visible to other instances immediately. **Why.** Inside the business transaction, a claim would stay invisible until commit, so concurrent retries would all pass, and a rollback would erase it. **Consequence.** Completion is not atomic with the handler's writes ([§3.7](#37-guarantees-and-limits)). A transactional mode is a future idea.
-
-#### D-04 Leases with owner tokens instead of distributed locks
-
-**Decision.** A claim is a conditional insert/update carrying a lease and a random owner token; `complete` and `release` require the token. **Why.** The store's own atomic primitives are enough; a lock service would add a dependency and a second failure mode. The token fences a slow first owner after a takeover. **Alternatives.** Redisson or ShedLock style locks; `SELECT … FOR UPDATE` held for the whole request (ties a connection to every running request).
-
-#### D-05 Time comes from the application clock
-
-**Decision.** Stores receive `now`, `leaseUntil` and `expiresAt` from the engine's `Clock`. **Why.** Deterministic tests with a `MutableClock` across every store, and identical semantics on databases with different time functions. **Trade-off.** Requires synchronised instance clocks; documented with the lease sizing rule.
-
-#### D-06 The scope key is a hash
-
-**Decision.** The primary key is `SHA-256` of length-prefixed client identity, method, route template and key; the raw parts are stored for diagnostics only. **Why.** Fixed 64-character index on every vendor, no index-length limits with long keys or routes, no delimiter ambiguity.
-
-#### D-07 An expired record is an absent record
-
-**Decision.** In every store, an `IN_PROGRESS` record with an expired lease and any record past its TTL behave as if they did not exist, whatever the fingerprint. **Why.** Redis implements expiry by deleting the key; the JDBC store must behave identically for one TCK to cover both.
-
-#### D-08 Transient outcomes are never stored
-
-**Decision.** `5xx`, exceptions, `408`, `425` and `429` release the claim; everything else in `2xx` and `4xx` is stored. **Why.** Replaying a stored `500` turns a transient failure into a permanent one. A `400` is deterministic and must be replayed so that a fixed payload sent with the old key gets `422`, not a new execution.
-
-#### D-09 The Spring adapter is a servlet filter
-
-**Decision.** `IdempotencyFilter` wraps the request and response and looks the handler up through the handler mapping. **Why.** Only a filter can buffer the request body before argument resolution and capture the final status, headers and bytes after message conversion and exception handling. **Alternatives.** `HandlerInterceptor` (cannot replace the response object); `ResponseBodyAdvice` (no status for exception paths, no bytes).
-
-#### D-10 Quarkus uses its own Redis client
-
-**Decision.** The Quarkus extension implements the Redis store on the Quarkus Redis client; `idempotency-store-redis` (Lettuce) serves plain Java and Spring. **Why.** The Quarkus client shares Vert.x with the application, needs no extra native-image configuration, and is configured with `quarkus.redis.*`. Both implementations pass the same TCK.
-
-#### D-11 Blocking store SPI
-
-**Decision.** The SPI is synchronous. Reactive adapters (WebFlux, Quarkus `Uni` endpoints, M7) offload store calls to a worker pool. **Why.** JDBC is blocking, virtual threads make blocking cheap, and one SPI keeps stores simple. A reactive SPI can be added later without breaking this one.
-
-#### D-12 No Java 21 APIs in main code
-
-**Decision.** Main code compiles with `--release 17`: records and sealed types, but no pattern matching for `switch`, no virtual-thread APIs. **Why.** Users on Java 17 are the long tail. Virtual-thread friendliness is a property of the code (no `synchronized` around I/O; `ReentrantLock` where a lock is needed), verified on Java 21 and 25 in CI.
-
-#### D-13 Release with JReleaser through the Central Portal
-
-**Decision.** JReleaser signs, deploys to Maven Central through the Central Portal, creates the GitHub release with the changelog, and attaches SBOMs. **Why.** One tool and one configuration file for the whole release, runnable locally in dry-run mode. **Alternatives.** Sonatype's `central-publishing-maven-plugin` plus separate changelog and release tooling.
-
-#### D-14 Problem types resolve to documentation
-
-**Decision.** Problem `type` URIs point to pages under the documentation site, and the base is configurable. **Why.** A client developer who sees `key-reuse` lands on a page that explains what happened and what to do.
-
-#### D-15 Stored headers use HTTP field lines
-
-**Decision.** `response_headers` is `Name: value` lines separated by CRLF. **Why.** Human-readable in SQL clients, needs no JSON library ([D-02](#d-02-zero-runtime-dependencies-in-core)), and HTTP guarantees values have no line breaks.
-
-#### D-16 Schema delivery without automatic Flyway registration
-
-**Decision.** The JDBC module ships vendor DDL, a Liquibase changelog to `include`, and Flyway-ready SQL that applications copy under their own next version number; `initialize-schema` covers embedded databases and quick starts. **Why.** Liquibase changesets are identified by id and author and include cleanly; a shipped Flyway `V1__` would collide with the application's own version sequence.
+| ADR | Decision |
+|---|---|
+| [0001](adr/0001-record-architecture-decisions.md) | Record architecture decisions |
+| [0002](adr/0002-framework-free-core.md) | Framework-free core with thin adapters |
+| [0003](adr/0003-zero-runtime-dependencies-in-core.md) | Zero runtime dependencies in core |
+| [0004](adr/0004-records-outside-the-business-transaction.md) | Records live outside the business transaction |
+| [0005](adr/0005-leases-with-owner-tokens.md) | Leases with owner tokens instead of distributed locks |
+| [0006](adr/0006-time-from-the-application-clock.md) | Time comes from the application clock, in every store |
+| [0007](adr/0007-scope-key-is-a-hash.md) | The scope key is a hash |
+| [0008](adr/0008-expired-record-is-absent.md) | An expired record is an absent record |
+| [0009](adr/0009-transient-responses-are-never-stored.md) | Transient responses are never stored |
+| [0010](adr/0010-spring-adapter-is-a-servlet-filter.md) | The Spring adapter is a servlet filter |
+| [0011](adr/0011-quarkus-uses-its-own-redis-client.md) | Quarkus uses its own Redis client |
+| [0012](adr/0012-blocking-store-spi.md) | Blocking store SPI |
+| [0013](adr/0013-no-java-21-apis-in-main-code.md) | No Java 21 APIs in main code |
+| [0014](adr/0014-release-with-jreleaser.md) | Release with JReleaser through the Central Portal |
+| [0015](adr/0015-problem-types-resolve-to-documentation.md) | Problem types resolve to documentation |
+| [0016](adr/0016-stored-headers-use-http-field-lines.md) | Stored headers use HTTP field lines |
+| [0017](adr/0017-schema-delivery-without-flyway-registration.md) | Schema delivery without automatic Flyway registration |
+| [0018](adr/0018-quarkus-3-lts-until-a-4x-lts.md) | The Quarkus extension targets the 3.x LTS until a 4.x LTS exists |
 
 ## 8. Non-functional requirements
 
@@ -719,7 +676,7 @@ Keys and bodies are never logged at `INFO` or above; `DEBUG` logs print the scop
 | NFR-03 | Store latency | `claim` + `complete` p99 below 5 ms on local PostgreSQL and below 2 ms on local Redis; numbers published for every store with hardware and versions. |
 | NFR-04 | Correctness under contention | The FR-11 race test passes 10 000 consecutive iterations on every store in the nightly build. |
 | NFR-05 | Dependencies | `idempotency-core` has zero runtime dependencies; each module's dependency tree is listed in the docs and enforced by `maven-enforcer`. |
-| NFR-06 | Compatibility | Java 17, 21, 25; Spring Boot 4.x; Quarkus current LTS and latest; GraalVM native for the Quarkus extension. |
+| NFR-06 | Compatibility | Java 17, 21, 25; Spring Boot 4.1.x; Quarkus 3.40 LTS (blocking) and the latest 4.x (informational, [ADR 0018](adr/0018-quarkus-3-lts-until-a-4x-lts.md)); GraalVM native for the Quarkus extension. |
 | NFR-07 | Virtual threads | The TCK passes with handlers on virtual threads; on Java 21 a JFR recording of the race test contains zero `jdk.VirtualThreadPinned` events from library code. |
 | NFR-08 | Bounded memory | Buffers never exceed the configured request and response limits; no unbounded caches (the handler annotation cache is keyed by `HandlerMethod`). |
 | NFR-09 | Security | Client-scoped keys by default; denylisted headers never replayed; table names validated; optional AES-256-GCM at rest; dependency and code scanning clean of high-severity findings at release. |
@@ -732,11 +689,11 @@ Keys and bodies are never logged at `INFO` or above; `DEBUG` logs print the scop
 
 | Level | Tools | Scope | Where it runs |
 |---|---|---|---|
-| Unit | JUnit 5, AssertJ | Key parser, durations, fingerprint, engine decisions with a fake store | every push, JDK 17/21/25 |
+| Unit | JUnit 6, AssertJ | Key parser, durations, fingerprint, engine decisions with a fake store | every push, JDK 17/21/25 |
 | Property-based | jqwik | Key parsing round-trips, JCS idempotence (`canon(canon(x)) == canon(x)`), fingerprint stability under key reordering and whitespace, record codec round-trips | every push |
-| Conformance vectors | JUnit 5 | RFC 8785 test vectors, RFC 9651 String parsing cases | every push |
+| Conformance vectors | JUnit 6 | RFC 8785 test vectors, RFC 9651 String parsing cases | every push |
 | Store TCK | `idempotency-test-kit`, Testcontainers | `IdempotencyStoreContract` against in-memory, PostgreSQL, MySQL, MariaDB, Oracle Free, SQL Server, Redis, Valkey | PostgreSQL, MySQL, Redis on every PR; full matrix nightly |
-| Concurrency | JUnit 5, virtual threads, `CountDownLatch` | FR-11 race, lease takeover with a `MutableClock`, lost-lease completion | every PR (100 iterations), nightly (10 000) |
+| Concurrency | JUnit 6, virtual threads, `CountDownLatch` | FR-11 race, lease takeover with a `MutableClock`, lost-lease completion | every PR (100 iterations), nightly (10 000) |
 | Adapter TCK | `HttpAdapterContract`, JDK `HttpClient` | Every row of [§6.5](#65-http-behaviour) against the Spring and Quarkus test apps | every PR |
 | Spring integration | `@SpringBootTest`, `ApplicationContextRunner` | Auto-configuration conditions, store selection, filter order with Spring Security, startup validation failures, Actuator, metrics | every PR |
 | Quarkus integration | `@QuarkusTest`, `QuarkusUnitTest` | Build-time validation errors, config mapping, Dev UI, health, event-loop assertion | every PR |
@@ -745,16 +702,16 @@ Keys and bodies are never logged at `INFO` or above; `DEBUG` logs print the scop
 | Performance | JMH, k6 | NFR-01 to NFR-03 | manual workflow, before a release |
 | API compatibility | japicmp | Public packages against the previous release | every PR from 1.0 |
 
-The TCK is a published artifact. `IdempotencyStoreContract` is an abstract JUnit 5 class with `protected abstract IdempotencyStore createStore(Clock clock)`; `HttpAdapterContract` drives a test application that exposes fixed endpoints: `POST /tck/orders` (201 with `Location` and an execution counter), `POST /tck/slow` (blocks on a latch), `POST /tck/boom` (throws), `POST /tck/unavailable` (503), `POST /tck/rejected` (400), `POST /tck/no-content` (204), `POST /tck/big` (response above the limit), `POST /tck/optional` (`required = false`) and `GET /tck/executions`. Third-party stores can run the same contract.
+The TCK is a published artifact. `IdempotencyStoreContract` is an abstract JUnit 6 class with `protected abstract IdempotencyStore createStore(Clock clock)`; `HttpAdapterContract` drives a test application that exposes fixed endpoints: `POST /tck/orders` (201 with `Location` and an execution counter), `POST /tck/slow` (blocks on a latch), `POST /tck/boom` (throws), `POST /tck/unavailable` (503), `POST /tck/rejected` (400), `POST /tck/no-content` (204), `POST /tck/big` (response above the limit), `POST /tck/optional` (`required = false`) and `GET /tck/executions`. Third-party stores can run the same contract.
 
 ## 10. Engineering practices, CI/CD and release
 
 ### 10.1 Practices
 
-- Trunk-based on `main` with short branches; branch protection requires green CI and one approving review (self-review checklist in the PR template while the project has one maintainer); squash merges only, linear history.
+- Trunk-based on `main` with short branches; branch protection requires green CI and linear history; no approving review is required while the project has one maintainer, and the PR template carries a self-review checklist; squash merges only.
 - Conventional Commits checked on PR titles; module names as scopes.
 - `@NullMarked` packages, NullAway errors fail the JDK 25 job (Error Prone runs on the newest JDK only).
-- Spotless check fails on unformatted code; `.editorconfig` for non-Java files.
+- Spotless check fails on unformatted code and on Java files without the `// SPDX-License-Identifier: Apache-2.0` header; `.editorconfig` for non-Java files.
 - `maven-enforcer`: required Java and Maven versions, dependency convergence, banned dependencies in core, no `SNAPSHOT` dependencies on release.
 - Each public type has Javadoc; `-Xdoclint` fails on broken Javadoc in public packages.
 - `CONTRIBUTING.md`, `SECURITY.md` (private vulnerability reporting through GitHub), issue and PR templates, `CODEOWNERS`.
@@ -837,12 +794,7 @@ idempotency-kit/
 
 Goal: an empty but complete build that every later PR plugs into.
 
-- [ ] Parent POM with `--release 17`, plugin and dependency management, reproducible-build settings, Maven wrapper
-- [ ] Module skeletons for every module in [§12](#12-repository-layout), including the BOM
-- [ ] Spotless, Enforcer, JaCoCo, Error Prone with NullAway on the JDK 25 profile
-- [ ] `ci.yml` with the JDK 17/21/25 matrix, `codeql.yml`, `dependabot.yml`
-- [ ] ADR 0001 (record architecture decisions) and ADRs for D-01 to D-16
-- [ ] `CONTRIBUTING.md`, `SECURITY.md`, issue and PR templates, `CODEOWNERS`, branch protection
+Tracked in [milestone M0](https://github.com/eduardo-alecrim/idempotency-kit/milestone/1).
 
 **Done when:** `./mvnw verify` is green on all three JDKs, every module installs locally, and the ADRs are merged.
 
@@ -850,15 +802,7 @@ Goal: an empty but complete build that every later PR plugs into.
 
 Goal: a Spring Boot application gets correct idempotency with one annotation.
 
-- [ ] Structured Field key parser, strict and lenient (FR-01, FR-02), and duration parsing for annotation values, with jqwik tests
-- [ ] RFC 8785 canonicalizer validated against the published test vectors
-- [ ] Default fingerprint strategy and scope key (FR-12 to FR-14)
-- [ ] `IdempotencyEngine`, `Decision`, policies, status policy (FR-03 to FR-10)
-- [ ] `InMemoryIdempotencyStore` (FR-23)
-- [ ] Problem Details factory and type URIs (FR-22)
-- [ ] Spring auto-configuration, `IdempotencyProperties` with metadata, `IdempotencyFilter`, handler resolution, startup validation (FR-16, FR-18 to FR-20, FR-28, FR-30)
-- [ ] `spring-boot-sample` with an orders endpoint and an HTTP file of example calls
-- [ ] First version of the adapter tests that later become `HttpAdapterContract`
+Tracked in [milestone M1](https://github.com/eduardo-alecrim/idempotency-kit/milestone/2).
 
 **Done when:** every row of the HTTP behaviour table passes against the Spring sample with the in-memory store, and core coverage is at least 90 %.
 
@@ -866,13 +810,7 @@ Goal: a Spring Boot application gets correct idempotency with one annotation.
 
 Goal: correct behaviour across instances on four database vendors.
 
-- [ ] `idempotency-test-kit` with `IdempotencyStoreContract` and `HttpAdapterContract`; in-memory store and Spring adapter moved onto it
-- [ ] JDBC store with dialects for PostgreSQL, MySQL/MariaDB, Oracle, SQL Server (FR-24)
-- [ ] Vendor DDL, Liquibase changelog, Flyway-ready SQL, schema validation, `initialize-schema` (FR-25)
-- [ ] Lease takeover and lost-lease completion (FR-09), race test (FR-11) with two Spring instances
-- [ ] Purge job with batching (FR-26)
-- [ ] Store failure policy and timeouts (FR-21)
-- [ ] Testcontainers matrix in `ci.yml` and `nightly.yml`
+Tracked in [milestone M2](https://github.com/eduardo-alecrim/idempotency-kit/milestone/3).
 
 **Done when:** the store TCK passes on all five databases, and the race test passes 10 000 iterations on PostgreSQL.
 
@@ -880,24 +818,15 @@ Goal: correct behaviour across instances on four database vendors.
 
 Goal: a store with no purge job and sub-millisecond operations.
 
-- [ ] Lettuce-based `RedisIdempotencyStore` with `SET NX PX` claims and Lua scripts (FR-27)
-- [ ] `RecordCodec` versioned binary encoding with round-trip property tests
-- [ ] Spring auto-configuration for Redis, reusing Spring Boot's Redis connection details
-- [ ] TCK on Redis and Valkey, including Redis Cluster mode in the nightly build
+Tracked in [milestone M3](https://github.com/eduardo-alecrim/idempotency-kit/milestone/4).
 
 **Done when:** the TCK passes on Redis and Valkey, and `store.type=auto` picks the right store in all `ApplicationContextRunner` scenarios.
 
 ### M4 — Quarkus extension
 
-Goal: the same behaviour on Quarkus, in JVM and native mode.
+Goal: the same behaviour on Quarkus 3.40 LTS, in JVM and native mode.
 
-- [ ] Runtime and deployment modules, feature registration, `@ConfigMapping` (§6.4)
-- [ ] Build-time discovery and validation of `@Idempotent` (FR-16, FR-20, FR-29)
-- [ ] Request and response filters, writer interceptor, event-loop assertion
-- [ ] JDBC store on Agroal data sources; Redis store on the Quarkus Redis client (D-10)
-- [ ] Purge job on `quarkus-scheduler`
-- [ ] Dev UI card with routes and recent records (FR-39), SmallRye Health check
-- [ ] `quarkus-sample` and `integration-tests`, adapter TCK in JVM and native mode
+Tracked in [milestone M4](https://github.com/eduardo-alecrim/idempotency-kit/milestone/5).
 
 **Done when:** the adapter TCK passes on Quarkus in JVM and native mode, and build-time validation errors are covered by `QuarkusUnitTest`.
 
@@ -905,12 +834,7 @@ Goal: the same behaviour on Quarkus, in JVM and native mode.
 
 Goal: everything a team needs to operate the library in production.
 
-- [ ] `IdempotentCall` with retries, backoff, jitter and `Retry-After` (FR-31)
-- [ ] Spring `RestClient` interceptor and MicroProfile REST Client filter (FR-32)
-- [ ] Micrometer metrics and observations, OpenTelemetry attributes on Quarkus (FR-33, FR-34)
-- [ ] Health contributors on both frameworks (FR-35), Actuator `idempotency` endpoint (FR-39)
-- [ ] OpenAPI customizers for springdoc and SmallRye OpenAPI (FR-36)
-- [ ] `AesGcmBodyCodec` with key ids and rotation (FR-38); header denylist (FR-37)
+Tracked in [milestone M5](https://github.com/eduardo-alecrim/idempotency-kit/milestone/6).
 
 **Done when:** the Spring and Quarkus samples show the metrics in a Grafana dashboard JSON committed under `samples/`, and the OpenAPI documents list the header and error responses.
 
@@ -918,11 +842,7 @@ Goal: everything a team needs to operate the library in production.
 
 Goal: the first public release on Maven Central.
 
-- [ ] MkDocs site with every section in [§11](#11-documentation-site), problem pages live at their `type` URIs
-- [ ] Generated configuration reference for both frameworks (NFR-13)
-- [ ] Central Portal namespace verified; JReleaser configuration with dry run in CI
-- [ ] `release.yml` with SBOMs and provenance; `RELEASING.md`
-- [ ] Release `0.1.0`; announce in the README and on https://eduardo-alecrim.github.io
+Tracked in [milestone M6](https://github.com/eduardo-alecrim/idempotency-kit/milestone/7).
 
 **Done when:** a new Spring Boot project and a new Quarkus project resolve `0.1.0` from Maven Central and pass the getting-started guide unchanged.
 
@@ -930,12 +850,7 @@ Goal: the first public release on Maven Central.
 
 Goal: a stable, measured, compatible API.
 
-- [ ] WebFlux adapter and Quarkus reactive endpoints with worker offloading (D-11)
-- [ ] japicmp check against the previous release, `internal` packages excluded
-- [ ] JMH and k6 benchmarks published with methodology (NFR-01 to NFR-03)
-- [ ] Compatibility matrix in CI: Spring Boot minor versions in support, Quarkus LTS and latest
-- [ ] careflow's intake API adopts the library as its first production-like consumer
-- [ ] API review against the spec; release `1.0.0`
+Tracked in [milestone M7](https://github.com/eduardo-alecrim/idempotency-kit/milestone/8).
 
 **Done when:** `1.0.0` is on Maven Central, the compatibility matrix is green, and benchmark numbers are on the docs site.
 
@@ -957,9 +872,9 @@ Goal: a stable, measured, compatible API.
 | Filter ordering against Spring Security or other filters | Principal missing, wrong scope | Default order after the security chain, integration test with Spring Security, documented property |
 | Quarkus REST internals change between versions | Extension breaks on upgrade | Test against LTS and latest; use only public extension APIs |
 | Oracle and SQL Server containers are slow to start | Long PR builds | Run them nightly; PRs cover PostgreSQL, MySQL and Redis |
-| Handlers slower than the lease | Double execution | Startup validation `lease < ttl`, `lease_lost` metric and log, lease sizing guide in the docs |
+| Handlers slower than the lease | Double execution | Per-operation lease, startup validation `lease < ttl`, `lease_lost` metric and log, lease sizing guide in the docs |
 | Completion not atomic with business writes | Re-execution after a crash | Documented limit; transactional mode on the future list |
-| Draft changes before becoming an RFC | Behaviour drift | Track the draft; semantics behind configuration where the draft is open; changelog entry per change |
+| The draft expired at revision 07 without becoming an RFC | Behaviour drift if a revival changes it | Implement draft-07; track the working group; semantics behind configuration where the draft is open; changelog entry per change |
 | Central Portal or signing setup friction | Release delayed | Dry-run JReleaser in CI from M0; `RELEASING.md` |
 | Scope creep (more frameworks, more stores) | Nothing ships | Roadmap order fixed; new adapters only after 1.0, through the TCK |
 
@@ -974,6 +889,7 @@ Goal: a stable, measured, compatible API.
 ## 17. References
 
 - IETF HTTPAPI, *The Idempotency-Key HTTP Header Field*: https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/
+- IETF HTTPAPI, *The Idempotency-Key HTTP Header Field*, draft-07: https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-idempotency-key-header-07
 - RFC 9651, Structured Field Values for HTTP: https://www.rfc-editor.org/rfc/rfc9651
 - RFC 8941, Structured Field Values for HTTP (obsoleted by RFC 9651): https://www.rfc-editor.org/rfc/rfc8941
 - RFC 9457, Problem Details for HTTP APIs: https://www.rfc-editor.org/rfc/rfc9457
