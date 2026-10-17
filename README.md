@@ -111,6 +111,10 @@ The [specification](docs/SPEC.md) has the semantics, requirements and architectu
 - [legacy-modernization](https://github.com/eduardo-alecrim/legacy-modernization): a SOAP and Oracle monolith migrated to Quarkus with the strangler fig pattern.
 - [trilho](https://github.com/eduardo-alecrim/trilho): a distributed commit log built from scratch in Java.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
 ## License
 
 [Apache License 2.0](LICENSE).
