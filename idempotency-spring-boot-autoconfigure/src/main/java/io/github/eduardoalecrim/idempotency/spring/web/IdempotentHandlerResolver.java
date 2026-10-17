@@ -87,15 +87,16 @@ public final class IdempotentHandlerResolver {
         });
     }
 
-    /** Returns the routes declared under {@code idempotency.routes}, as {@code METHOD pattern}. */
-    public List<String> configuredRoutes() {
-        List<String> described = new ArrayList<>();
+    /** Returns the operations declared under {@code idempotency.routes}, one per method. */
+    public List<DeclaredRoute> configuredRoutes() {
+        List<DeclaredRoute> declared = new ArrayList<>();
         for (ConfiguredRoute route : routes) {
-            route.methods()
-                    .forEach(method ->
-                            described.add(method + " " + route.pattern().getPatternString()));
+            route.methods().stream()
+                    .sorted()
+                    .forEach(method -> declared.add(
+                            new DeclaredRoute(method, route.pattern().getPatternString(), route.policy())));
         }
-        return described;
+        return declared;
     }
 
     /** Names a handler in messages, such as {@code OrderController#create}. */
@@ -141,6 +142,15 @@ public final class IdempotentHandlerResolver {
         }
         return List.copyOf(compiled);
     }
+
+    /**
+     * An operation declared under {@code idempotency.routes}.
+     *
+     * @param method the HTTP method, in uppercase
+     * @param routeTemplate the path pattern
+     * @param policy the operation's policy
+     */
+    public record DeclaredRoute(String method, String routeTemplate, IdempotencyPolicy policy) {}
 
     private record HandlerKey(Class<?> beanType, Method method) {}
 
