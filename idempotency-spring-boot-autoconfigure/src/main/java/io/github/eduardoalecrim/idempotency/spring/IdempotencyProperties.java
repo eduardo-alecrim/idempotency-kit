@@ -399,6 +399,11 @@ public class IdempotencyProperties {
         /** What happens when the store fails before the handler: answer 503, or run the handler unprotected. */
         private StoreFailurePolicy onFailure = StoreFailurePolicy.FAIL_CLOSED;
 
+        /** Timeout of a single store call. */
+        private Duration timeout = Duration.ofSeconds(2);
+
+        private final Jdbc jdbc = new Jdbc();
+
         private final InMemory inMemory = new InMemory();
 
         /** Returns the store type. */
@@ -421,9 +426,80 @@ public class IdempotencyProperties {
             this.onFailure = onFailure;
         }
 
+        /** Returns the timeout of a store call. */
+        public Duration getTimeout() {
+            return timeout;
+        }
+
+        /** Sets the timeout of a store call. */
+        public void setTimeout(Duration timeout) {
+            this.timeout = timeout;
+        }
+
+        /** Returns the JDBC store settings. */
+        public Jdbc getJdbc() {
+            return jdbc;
+        }
+
         /** Returns the in-memory store settings. */
         public InMemory getInMemory() {
             return inMemory;
+        }
+
+        /** JDBC store settings. */
+        public static class Jdbc {
+
+            /** Record table, optionally schema-qualified; must match {@code [A-Za-z_][A-Za-z0-9_.]*}. */
+            private String tableName = "idempotency_record";
+
+            /** Database dialect; auto detects it from the connection. */
+            private JdbcDialectName dialect = JdbcDialectName.AUTO;
+
+            /** Whether startup fails when the table or one of its columns is missing. */
+            private boolean validateSchema = true;
+
+            /** When to create the table with the shipped {@code schema-{vendor}.sql}. */
+            private InitializeSchema initializeSchema = InitializeSchema.NEVER;
+
+            /** Returns the table name. */
+            public String getTableName() {
+                return tableName;
+            }
+
+            /** Sets the table name. */
+            public void setTableName(String tableName) {
+                this.tableName = tableName;
+            }
+
+            /** Returns the dialect. */
+            public JdbcDialectName getDialect() {
+                return dialect;
+            }
+
+            /** Sets the dialect. */
+            public void setDialect(JdbcDialectName dialect) {
+                this.dialect = dialect;
+            }
+
+            /** Returns whether the schema is validated at startup. */
+            public boolean isValidateSchema() {
+                return validateSchema;
+            }
+
+            /** Sets whether the schema is validated at startup. */
+            public void setValidateSchema(boolean validateSchema) {
+                this.validateSchema = validateSchema;
+            }
+
+            /** Returns when the table is created. */
+            public InitializeSchema getInitializeSchema() {
+                return initializeSchema;
+            }
+
+            /** Sets when the table is created. */
+            public void setInitializeSchema(InitializeSchema initializeSchema) {
+                this.initializeSchema = initializeSchema;
+            }
         }
 
         /** In-memory store settings. */
@@ -454,6 +530,32 @@ public class IdempotencyProperties {
         REDIS,
         /** The in-memory store. */
         IN_MEMORY
+    }
+
+    /** The database dialect of the JDBC store. */
+    public enum JdbcDialectName {
+        /** Detected from the connection. */
+        AUTO,
+        /** PostgreSQL. */
+        POSTGRESQL,
+        /** MySQL. */
+        MYSQL,
+        /** MariaDB. */
+        MARIADB,
+        /** Oracle. */
+        ORACLE,
+        /** SQL Server. */
+        SQLSERVER
+    }
+
+    /** When the JDBC store creates its table. */
+    public enum InitializeSchema {
+        /** Never; the application's migrations create it. */
+        NEVER,
+        /** Only on an embedded database. */
+        EMBEDDED,
+        /** Whenever the table is missing. */
+        ALWAYS
     }
 
     /** An idempotent operation declared in configuration. */
