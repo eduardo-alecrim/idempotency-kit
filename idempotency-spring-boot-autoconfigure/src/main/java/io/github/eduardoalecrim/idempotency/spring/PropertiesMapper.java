@@ -12,8 +12,11 @@ import java.util.Locale;
 import java.util.Set;
 import org.springframework.util.unit.DataSize;
 
-/** Builds core objects from {@link IdempotencyProperties}, naming the property behind every invalid value. */
-final class PropertiesMapper {
+/**
+ * Builds core objects from {@link IdempotencyProperties}, naming the property behind every invalid value. Shared by
+ * the auto-configurations; not API.
+ */
+public final class PropertiesMapper {
 
     private static final Set<String> ALLOWED_METHODS = Set.of("POST", "PATCH", "PUT", "DELETE");
 
@@ -78,7 +81,8 @@ final class PropertiesMapper {
         }
     }
 
-    static Set<String> methods(IdempotencyProperties properties) {
+    /** Returns the methods that can be idempotent, in uppercase. */
+    public static Set<String> methods(IdempotencyProperties properties) {
         Set<String> methods = new LinkedHashSet<>();
         for (String method : properties.getMethods()) {
             String name = method.trim().toUpperCase(Locale.ROOT);
