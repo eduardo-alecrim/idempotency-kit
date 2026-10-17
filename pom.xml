@@ -42,6 +42,18 @@
     <url>https://github.com/eduardo-alecrim/idempotency-kit/issues</url>
   </issueManagement>
 
+  <modules>
+    <module>idempotency-bom</module>
+    <module>idempotency-core</module>
+    <module>idempotency-store-jdbc</module>
+    <module>idempotency-store-redis</module>
+    <module>idempotency-spring-boot-autoconfigure</module>
+    <module>idempotency-spring-boot-starter</module>
+    <module>idempotency-quarkus</module>
+    <module>idempotency-client</module>
+    <module>idempotency-test-kit</module>
+  </modules>
+
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -51,6 +63,8 @@
     <!-- Frameworks: imported as BOMs only by the modules that use them -->
     <spring-boot.version>4.1.1</spring-boot.version>
     <quarkus.version>3.40.1</quarkus.version>
+
+    <jspecify.version>1.0.1</jspecify.version>
 
     <!-- Test libraries -->
     <junit.version>6.1.3</junit.version>
@@ -75,6 +89,11 @@
 
   <dependencyManagement>
     <dependencies>
+      <dependency>
+        <groupId>org.jspecify</groupId>
+        <artifactId>jspecify</artifactId>
+        <version>${jspecify.version}</version>
+      </dependency>
       <dependency>
         <groupId>org.junit</groupId>
         <artifactId>junit-bom</artifactId>
@@ -130,6 +149,17 @@
               <arg>-Werror</arg>
             </compilerArgs>
           </configuration>
+          <executions>
+            <execution>
+              <id>default-compile</id>
+              <configuration>
+                <compilerArgs combine.children="append">
+                  <!-- Broken Javadoc fails the build; missing Javadoc does not -->
+                  <arg>-Xdoclint:all,-missing</arg>
+                </compilerArgs>
+              </configuration>
+            </execution>
+          </executions>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
@@ -202,18 +232,6 @@
             <id>attach-sources</id>
             <goals>
               <goal>jar-no-fork</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-javadoc-plugin</artifactId>
-        <executions>
-          <execution>
-            <id>attach-javadocs</id>
-            <goals>
-              <goal>jar</goal>
             </goals>
           </execution>
         </executions>
