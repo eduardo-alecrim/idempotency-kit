@@ -182,7 +182,6 @@ public final class IdempotencyEngine {
         RouteRef route = proceed.route();
         if (!policy.statusPolicy().isStorable(response.status())) {
             release(proceed);
-            report(Outcome.RELEASED, route, proceed.startedAt());
             return;
         }
         List<StoredResponse.Header> headers = replayHeaders(response, policy);
@@ -197,7 +196,6 @@ public final class IdempotencyEngine {
             }
             if (policy.oversized() == OversizedPolicy.RELEASE) {
                 release(proceed);
-                report(Outcome.RELEASED, route, proceed.startedAt());
                 return;
             }
             stored = new StoredResponse(response.status(), headers, new byte[0], true);
@@ -234,10 +232,13 @@ public final class IdempotencyEngine {
                 () -> "Releasing " + proceed.key() + " after "
                         + cause.getClass().getName());
         release(proceed);
-        report(Outcome.RELEASED, proceed.route(), proceed.startedAt());
     }
 
-    private void release(Decision.Proceed proceed) {
+    /**
+     * Releases the record without storing a response, so that a retry runs again. For responses the adapter cannot
+     * capture. Never throws.
+     */
+    public void release(Decision.Proceed proceed) {
         try {
             run(StoreOperation.RELEASE, () -> store.release(proceed.key(), proceed.token()));
         } catch (RuntimeException e) {
@@ -247,6 +248,7 @@ public final class IdempotencyEngine {
                             + "; retries get 409 until its lease ends",
                     e);
         }
+        report(Outcome.RELEASED, proceed.route(), proceed.startedAt());
     }
 
     private <T> T call(StoreOperation operation, Supplier<T> call) {
