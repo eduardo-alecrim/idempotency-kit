@@ -33,8 +33,9 @@ jobs:
           languages: java-kotlin
           build-mode: manual
           queries: security-and-quality
+      # Test sources are not compiled: only shipped code is analyzed.
       - name: Build
-        run: ./mvnw -B -ntp -DskipTests -Djacoco.skip=true -Dspotless.check.skip=true package
+        run: ./mvnw -B -ntp -Dmaven.test.skip=true -Djacoco.skip=true -Dspotless.check.skip=true package
       - uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           category: /language:java-kotlin
