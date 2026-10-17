@@ -71,6 +71,8 @@
     <quarkus.version>3.40.1</quarkus.version>
 
     <jspecify.version>1.0.1</jspecify.version>
+    <error-prone.version>2.50.0</error-prone.version>
+    <nullaway.version>0.14.2</nullaway.version>
 
     <!-- Test libraries -->
     <junit.version>6.1.3</junit.version>
@@ -359,4 +361,41 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <profile>
+      <!-- Error Prone needs JDK 21+; CI runs it on the newest JDK only -->
+      <id>error-prone</id>
+      <activation>
+        <jdk>[25,)</jdk>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <configuration>
+              <compilerArgs combine.children="append">
+                <arg>-XDcompilePolicy=simple</arg>
+                <arg>--should-stop=ifError=FLOW</arg>
+                <arg>-Xplugin:ErrorProne -XepDisableWarningsInGeneratedCode -Xep:NullAway:ERROR -XepOpt:NullAway:OnlyNullMarked=true -XepOpt:NullAway:JSpecifyMode=true</arg>
+              </compilerArgs>
+              <annotationProcessorPaths combine.children="append">
+                <path>
+                  <groupId>com.google.errorprone</groupId>
+                  <artifactId>error_prone_core</artifactId>
+                  <version>${error-prone.version}</version>
+                </path>
+                <path>
+                  <groupId>com.uber.nullaway</groupId>
+                  <artifactId>nullaway</artifactId>
+                  <version>${nullaway.version}</version>
+                </path>
+              </annotationProcessorPaths>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>
