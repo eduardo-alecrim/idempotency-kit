@@ -1,0 +1,28 @@
+{
+  "properties": [
+    {
+      "name": "idempotency.methods",
+      "defaultValue": ["POST", "PATCH"]
+    },
+    {
+      "name": "idempotency.response.store-statuses",
+      "defaultValue": ["2xx", "4xx"]
+    },
+    {
+      "name": "idempotency.response.release-statuses",
+      "defaultValue": ["408", "425", "429"]
+    },
+    {
+      "name": "idempotency.response.replay-headers",
+      "defaultValue": ["Content-Type", "Content-Language", "Location", "ETag", "Last-Modified", "Cache-Control"]
+    },
+    {
+      "name": "idempotency.problems.base-uri",
+      "defaultValue": "https://eduardo-alecrim.github.io/idempotency-kit/problems/"
+    },
+    {
+      "name": "idempotency.store.in-memory.max-entries",
+      "defaultValue": 10000
+    }
+  ]
+}

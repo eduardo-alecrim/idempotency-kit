@@ -1,0 +1,2 @@
+io.github.eduardoalecrim.idempotency.spring.IdempotencyInMemoryStoreAutoConfiguration
+io.github.eduardoalecrim.idempotency.spring.IdempotencyAutoConfiguration
