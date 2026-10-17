@@ -11,14 +11,11 @@ import io.github.eduardoalecrim.idempotency.spi.OwnerToken;
 import io.github.eduardoalecrim.idempotency.spi.ScopeKey;
 import io.github.eduardoalecrim.idempotency.spi.StoreHealth;
 import io.github.eduardoalecrim.idempotency.spi.StoredResponse;
-import io.github.eduardoalecrim.idempotency.spring.tck.HttpBehaviourContract.StoreFailure;
 import io.github.eduardoalecrim.idempotency.store.memory.InMemoryIdempotencyStore;
+import io.github.eduardoalecrim.idempotency.tck.HttpAdapterContract.StoreFailure;
+import io.github.eduardoalecrim.idempotency.tck.MutableClock;
 import java.net.URI;
-import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
-import java.time.ZoneId;
-import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -49,8 +46,8 @@ class TckApplication {
     }
 
     @Bean
-    TestClock clock() {
-        return new TestClock(Instant.parse("2026-10-17T10:00:00Z"));
+    MutableClock clock() {
+        return new MutableClock(Instant.parse("2026-10-17T10:00:00Z"));
     }
 
     @Bean
@@ -135,35 +132,6 @@ class TckApplication {
 
         void releaseSlow() {
             gate.getAndSet(new CountDownLatch(1)).countDown();
-        }
-    }
-
-    /** A clock that moves only when a test advances it. */
-    static final class TestClock extends Clock {
-
-        private volatile Instant now;
-
-        TestClock(Instant now) {
-            this.now = now;
-        }
-
-        void advance(Duration duration) {
-            now = now.plus(duration);
-        }
-
-        @Override
-        public ZoneId getZone() {
-            return ZoneOffset.UTC;
-        }
-
-        @Override
-        public Clock withZone(ZoneId zone) {
-            return this;
-        }
-
-        @Override
-        public Instant instant() {
-            return now;
         }
     }
 

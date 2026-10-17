@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-package io.github.eduardoalecrim.idempotency.spring.tck;
+package io.github.eduardoalecrim.idempotency.tck;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -19,11 +19,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * One test per row of the HTTP behaviour table (SPEC §6.5), against an application that exposes the {@code /tck/*}
- * endpoints of SPEC §9 with a request and response limit of 1 KB and a 30 s lease. Written to become
- * {@code HttpAdapterContract} in the test kit.
+ * One test per row of the HTTP behaviour table (SPEC §6.5). Extend it for an adapter and run it against an application
+ * that exposes the {@code /tck/*} endpoints of SPEC §9, with a request and response body limit of 1 KB, the default
+ * 30 s lease and 24 h TTL, and the clock and store controlled through the hooks below.
  */
-abstract class HttpBehaviourContract {
+public abstract class HttpAdapterContract {
 
     private static final String ORDER = "{\"item\":\"book\",\"quantity\":1}";
 
@@ -48,7 +48,7 @@ abstract class HttpBehaviourContract {
     protected abstract void releaseSlow();
 
     /** How the store fails. */
-    enum StoreFailure {
+    public enum StoreFailure {
         /** It works. */
         NONE,
         /** Every call throws. */
