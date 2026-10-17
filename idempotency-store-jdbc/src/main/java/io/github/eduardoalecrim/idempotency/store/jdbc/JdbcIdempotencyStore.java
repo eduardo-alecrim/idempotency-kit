@@ -25,6 +25,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 import javax.sql.DataSource;
 import org.jspecify.annotations.Nullable;
@@ -35,6 +45,9 @@ import org.jspecify.annotations.Nullable;
  * <p>Every statement touches one row, runs on its own auto-commit connection taken from the data source, and is safe
  * under {@code READ COMMITTED}; records stay outside the application's transactions (ADR 0004). Time comparisons use
  * the instants passed in, never the database clock (ADR 0006).
+ *
+ * <p>A caller waits at most the {@linkplain Builder#timeout(Duration) timeout} for each call, which runs on a bounded pool of
+ * store threads; a pool or network that hangs fails the call instead of holding the caller (FR-21, NFR-10).
  */
 public final class JdbcIdempotencyStore implements IdempotencyStore, IdempotencyStoreInspector {
 
@@ -52,17 +65,30 @@ public final class JdbcIdempotencyStore implements IdempotencyStore, Idempotency
                     + " owner_token, lease_until, response_status, response_headers, response_body, body_omitted,"
                     + " created_at, completed_at, expires_at";
 
+    private static final AtomicInteger THREADS = new AtomicInteger();
+
     private final DataSource dataSource;
     private final String table;
+    private final Duration timeout;
     private final int queryTimeoutSeconds;
+    private final ExecutorService executor;
     private volatile @Nullable JdbcDialect dialect;
 
     private JdbcIdempotencyStore(Builder builder) {
         this.dataSource = builder.dataSource;
         this.table = builder.tableName;
         this.dialect = builder.dialect;
-        long millis = builder.queryTimeout.toMillis();
-        this.queryTimeoutSeconds = (int) Math.max(1, (millis + 999) / 1000);
+        this.timeout = builder.timeout;
+        this.queryTimeoutSeconds = (int) Math.max(1, (timeout.toMillis() + 999) / 1000);
+        int threads = builder.maxConcurrentCalls;
+        ThreadPoolExecutor pool = new ThreadPoolExecutor(
+                threads, threads, 60, TimeUnit.SECONDS, new LinkedBlockingQueue<>(threads * 4), task -> {
+                    Thread thread = new Thread(task, "idempotency-jdbc-" + THREADS.incrementAndGet());
+                    thread.setDaemon(true);
+                    return thread;
+                });
+        pool.allowCoreThreadTimeOut(true);
+        this.executor = pool;
     }
 
     /** Returns a builder for a store on {@code dataSource}. */
@@ -99,118 +125,193 @@ public final class JdbcIdempotencyStore implements IdempotencyStore, Idempotency
 
     @Override
     public ClaimResult claim(ClaimRequest request) {
-        JdbcDialect dialect = dialect();
-        try (Connection connection = connection()) {
-            for (int round = 0; round < CLAIM_ROUNDS; round++) {
-                OwnerToken token = OwnerToken.random();
-                if (insert(connection, dialect, request, token) || takeOver(connection, dialect, request, token)) {
-                    return new ClaimResult.Acquired(token);
-                }
-                IdempotencyRecord existing = select(connection, dialect, request.key());
-                if (existing != null) {
-                    return new ClaimResult.Existing(existing);
-                }
-                // Purged between the update and the select: start again.
-            }
-            throw new IdempotencyStoreException(
-                    "JDBC store could not claim a record after " + CLAIM_ROUNDS + " rounds");
-        } catch (SQLException e) {
-            throw new IdempotencyStoreException("JDBC store failed to claim a record", e);
-        }
+        return call(
+                "claim a record",
+                () -> withConnection(connection -> {
+                    JdbcDialect dialect = dialect();
+                    for (int round = 0; round < CLAIM_ROUNDS; round++) {
+                        OwnerToken token = OwnerToken.random();
+                        if (insert(connection, dialect, request, token)
+                                || takeOver(connection, dialect, request, token)) {
+                            return new ClaimResult.Acquired(token);
+                        }
+                        IdempotencyRecord existing = select(connection, dialect, request.key());
+                        if (existing != null) {
+                            return new ClaimResult.Existing(existing);
+                        }
+                        // Purged between the update and the select: start again.
+                    }
+                    throw new IdempotencyStoreException(
+                            "JDBC store could not claim a record after " + CLAIM_ROUNDS + " rounds");
+                }));
     }
 
     @Override
     public boolean complete(
             ScopeKey key, OwnerToken token, StoredResponse response, Instant completedAt, Instant expiresAt) {
-        JdbcDialect dialect = dialect();
         String sql = "UPDATE " + table + " SET state = '" + COMPLETED + "', owner_token = NULL, lease_until = NULL,"
                 + " response_status = ?, response_headers = ?, response_body = ?, body_omitted = ?,"
                 + " completed_at = ?, expires_at = ? WHERE scope_key = ? AND owner_token = ? AND state = '"
                 + IN_PROGRESS + "'";
-        try (Connection connection = connection();
-                PreparedStatement statement = prepare(connection, sql)) {
-            statement.setInt(1, response.status());
-            statement.setString(2, HeaderLines.encode(response.headers()));
-            statement.setBytes(3, response.body());
-            statement.setBoolean(4, response.bodyOmitted());
-            dialect.setInstant(statement, 5, completedAt);
-            dialect.setInstant(statement, 6, expiresAt);
-            statement.setString(7, key.value());
-            statement.setString(8, token.value());
-            return statement.executeUpdate() == 1;
-        } catch (SQLException e) {
-            throw new IdempotencyStoreException("JDBC store failed to complete a record", e);
-        }
+        return call(
+                "complete a record",
+                () -> withConnection(connection -> {
+                    JdbcDialect dialect = dialect();
+                    try (PreparedStatement statement = prepare(connection, sql)) {
+                        statement.setInt(1, response.status());
+                        statement.setString(2, HeaderLines.encode(response.headers()));
+                        statement.setBytes(3, response.body());
+                        statement.setBoolean(4, response.bodyOmitted());
+                        dialect.setInstant(statement, 5, completedAt);
+                        dialect.setInstant(statement, 6, expiresAt);
+                        statement.setString(7, key.value());
+                        statement.setString(8, token.value());
+                        return statement.executeUpdate() == 1;
+                    }
+                }));
     }
 
     @Override
     public void release(ScopeKey key, OwnerToken token) {
         String sql =
                 "DELETE FROM " + table + " WHERE scope_key = ? AND owner_token = ? AND state = '" + IN_PROGRESS + "'";
-        try (Connection connection = connection();
-                PreparedStatement statement = prepare(connection, sql)) {
-            statement.setString(1, key.value());
-            statement.setString(2, token.value());
-            statement.executeUpdate();
-        } catch (SQLException e) {
-            throw new IdempotencyStoreException("JDBC store failed to release a record", e);
-        }
+        call(
+                "release a record",
+                () -> withConnection(connection -> {
+                    try (PreparedStatement statement = prepare(connection, sql)) {
+                        statement.setString(1, key.value());
+                        statement.setString(2, token.value());
+                        return statement.executeUpdate();
+                    }
+                }));
     }
 
     @Override
     public Optional<IdempotencyRecord> find(ScopeKey key, Instant now) {
-        JdbcDialect dialect = dialect();
-        try (Connection connection = connection()) {
-            IdempotencyRecord record = select(connection, dialect, key);
-            return record == null || record.isExpired(now) ? Optional.empty() : Optional.of(record);
-        } catch (SQLException e) {
-            throw new IdempotencyStoreException("JDBC store failed to read a record", e);
-        }
+        Optional<IdempotencyRecord> record = call(
+                "read a record",
+                () -> withConnection(connection -> Optional.ofNullable(select(connection, dialect(), key))));
+        return record.filter(found -> !found.isExpired(now));
     }
 
     @Override
     public int purgeExpired(Instant now, int batchSize) {
-        JdbcDialect dialect = dialect();
-        try (Connection connection = connection();
-                PreparedStatement statement = dialect.purge(connection, table, now, batchSize)) {
-            statement.setQueryTimeout(queryTimeoutSeconds);
-            return statement.executeUpdate();
-        } catch (SQLException e) {
-            throw new IdempotencyStoreException("JDBC store failed to purge expired records", e);
-        }
+        return call(
+                "purge expired records",
+                () -> withConnection(connection -> {
+                    try (PreparedStatement statement = dialect().purge(connection, table, now, batchSize)) {
+                        statement.setQueryTimeout(queryTimeoutSeconds);
+                        return statement.executeUpdate();
+                    }
+                }));
     }
 
     @Override
     public StoreHealth health() {
-        try (Connection connection = connection();
-                PreparedStatement statement = prepare(connection, dialect().ping());
-                ResultSet rows = statement.executeQuery()) {
-            if (!rows.next()) {
-                return StoreHealth.down("jdbc: the ping returned no row");
-            }
-            return StoreHealth.up("jdbc, " + connection.getMetaData().getDatabaseProductName());
-        } catch (SQLException | IdempotencyStoreException e) {
+        try {
+            return call(
+                    "check its health",
+                    () -> withConnection(connection -> {
+                        try (PreparedStatement statement =
+                                        prepare(connection, dialect().ping());
+                                ResultSet rows = statement.executeQuery()) {
+                            if (!rows.next()) {
+                                return StoreHealth.down("jdbc: the ping returned no row");
+                            }
+                            return StoreHealth.up(
+                                    "jdbc, " + connection.getMetaData().getDatabaseProductName());
+                        }
+                    }));
+        } catch (IdempotencyStoreException e) {
             return StoreHealth.down("jdbc: " + e.getMessage());
         }
     }
 
     @Override
     public List<RecordSummary> recent(int limit) {
-        JdbcDialect dialect = dialect();
-        String sql = dialect.limit("SELECT " + COLUMNS + " FROM " + table + " ORDER BY created_at DESC");
-        try (Connection connection = connection();
-                PreparedStatement statement = prepare(connection, sql)) {
-            statement.setInt(1, limit);
-            List<RecordSummary> summaries = new ArrayList<>();
-            try (ResultSet rows = statement.executeQuery()) {
-                while (rows.next()) {
-                    summaries.add(RecordSummary.of(map(rows, dialect)));
-                }
-            }
-            return summaries;
-        } catch (SQLException e) {
-            throw new IdempotencyStoreException("JDBC store failed to list records", e);
+        return call(
+                "list records",
+                () -> withConnection(connection -> {
+                    JdbcDialect dialect = dialect();
+                    String sql = dialect.limit("SELECT " + COLUMNS + " FROM " + table + " ORDER BY created_at DESC");
+                    try (PreparedStatement statement = prepare(connection, sql)) {
+                        statement.setInt(1, limit);
+                        List<RecordSummary> summaries = new ArrayList<>();
+                        try (ResultSet rows = statement.executeQuery()) {
+                            while (rows.next()) {
+                                summaries.add(RecordSummary.of(map(rows, dialect)));
+                            }
+                        }
+                        return summaries;
+                    }
+                }));
+    }
+
+    /**
+     * Runs {@code work} on a store thread and waits for it at most the timeout, so that a hung pool or network never
+     * holds the caller longer (NFR-10). The work goes on until its own query and network timeouts end it.
+     */
+    private <T> T call(String action, Callable<T> work) {
+        Future<T> future;
+        try {
+            future = executor.submit(work);
+        } catch (RejectedExecutionException e) {
+            throw new IdempotencyStoreException("JDBC store is saturated and could not " + action, e);
         }
+        try {
+            return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            throw new IdempotencyStoreException("JDBC store did not " + action + " within " + timeout, e);
+        } catch (InterruptedException e) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new IdempotencyStoreException("Interrupted while the JDBC store tried to " + action, e);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof IdempotencyStoreException storeFailure) {
+                throw storeFailure;
+            }
+            if (cause instanceof RuntimeException runtime) {
+                throw runtime;
+            }
+            if (cause instanceof Error error) {
+                throw error;
+            }
+            throw new IdempotencyStoreException("JDBC store failed to " + action, cause == null ? e : cause);
+        }
+    }
+
+    /**
+     * Runs {@code work} on an auto-commit connection whose network timeout is the store timeout, restoring the previous
+     * network timeout before the connection goes back to the pool.
+     */
+    private <T> T withConnection(SqlFunction<T> work) throws SQLException {
+        try (Connection connection = dataSource.getConnection()) {
+            if (!connection.getAutoCommit()) {
+                connection.setAutoCommit(true);
+            }
+            int previous = connection.getNetworkTimeout();
+            connection.setNetworkTimeout(Runnable::run, (int) Math.min(Integer.MAX_VALUE, timeout.toMillis()));
+            T result;
+            try {
+                result = work.apply(connection);
+            } catch (SQLException | RuntimeException e) {
+                try {
+                    connection.setNetworkTimeout(Runnable::run, previous);
+                } catch (SQLException restore) {
+                    e.addSuppressed(restore);
+                }
+                throw e;
+            }
+            connection.setNetworkTimeout(Runnable::run, previous);
+            return result;
+        }
+    }
+
+    @FunctionalInterface
+    private interface SqlFunction<T> {
+        T apply(Connection connection) throws SQLException;
     }
 
     private boolean insert(Connection connection, JdbcDialect dialect, ClaimRequest request, OwnerToken token)
@@ -311,14 +412,6 @@ public final class JdbcIdempotencyStore implements IdempotencyStore, Idempotency
                 Objects.requireNonNull(dialect.getInstant(row, "expires_at")));
     }
 
-    private Connection connection() throws SQLException {
-        Connection connection = dataSource.getConnection();
-        if (!connection.getAutoCommit()) {
-            connection.setAutoCommit(true);
-        }
-        return connection;
-    }
-
     private PreparedStatement prepare(Connection connection, String sql) throws SQLException {
         PreparedStatement statement = connection.prepareStatement(sql);
         statement.setQueryTimeout(queryTimeoutSeconds);
@@ -344,7 +437,8 @@ public final class JdbcIdempotencyStore implements IdempotencyStore, Idempotency
         private final DataSource dataSource;
         private String tableName = DEFAULT_TABLE_NAME;
         private @Nullable JdbcDialect dialect;
-        private Duration queryTimeout = Duration.ofSeconds(2);
+        private Duration timeout = Duration.ofSeconds(2);
+        private int maxConcurrentCalls = 64;
 
         private Builder(DataSource dataSource) {
             this.dataSource = dataSource;
@@ -369,12 +463,27 @@ public final class JdbcIdempotencyStore implements IdempotencyStore, Idempotency
             return this;
         }
 
-        /** Sets the timeout of each statement, rounded up to whole seconds; default 2 seconds. */
-        public Builder queryTimeout(Duration queryTimeout) {
-            if (queryTimeout.isNegative() || queryTimeout.isZero()) {
-                throw new IllegalArgumentException("queryTimeout must be positive");
+        /**
+         * Sets how long a caller waits for one store call; default 2 seconds. Statements get it as their query timeout,
+         * rounded up to whole seconds, and connections as their network timeout.
+         */
+        public Builder timeout(Duration timeout) {
+            if (timeout.isNegative() || timeout.isZero()) {
+                throw new IllegalArgumentException("timeout must be positive");
             }
-            this.queryTimeout = queryTimeout;
+            this.timeout = timeout;
+            return this;
+        }
+
+        /**
+         * Sets how many store calls run at once; default 64. A few more wait in a queue, and calls beyond that fail at
+         * once, so that a database outage cannot pile up threads.
+         */
+        public Builder maxConcurrentCalls(int maxConcurrentCalls) {
+            if (maxConcurrentCalls < 1) {
+                throw new IllegalArgumentException("maxConcurrentCalls must be positive");
+            }
+            this.maxConcurrentCalls = maxConcurrentCalls;
             return this;
         }
 
