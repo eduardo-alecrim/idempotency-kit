@@ -1,0 +1,40 @@
+### 1. First call: the order is created (201, order 1)
+POST http://localhost:8080/orders
+Content-Type: application/json
+Idempotency-Key: "8e03978e-40d5-43e8-bc93-6894a57f9324"
+
+{"item": "book", "quantity": 1}
+
+### 2. Retry with the same key and body: the first response is replayed (Idempotent-Replayed: true, still order 1)
+POST http://localhost:8080/orders
+Content-Type: application/json
+Idempotency-Key: "8e03978e-40d5-43e8-bc93-6894a57f9324"
+
+{ "quantity": 1, "item": "book" }
+
+### 3. Same key, different body: 422 key-reuse
+POST http://localhost:8080/orders
+Content-Type: application/json
+Idempotency-Key: "8e03978e-40d5-43e8-bc93-6894a57f9324"
+
+{"item": "pen", "quantity": 2}
+
+### 4. A slow order: takes ten seconds. Send request 5 while this one runs.
+POST http://localhost:8080/orders/slow
+Content-Type: application/json
+Idempotency-Key: "2f1d5c3a-9b7e-4c61-8a0f-3e5d7b9c1a24"
+
+{"item": "lamp", "quantity": 1}
+
+### 5. Retry while request 4 runs: 409 request-in-progress with Retry-After
+POST http://localhost:8080/orders/slow
+Content-Type: application/json
+Idempotency-Key: "2f1d5c3a-9b7e-4c61-8a0f-3e5d7b9c1a24"
+
+{"item": "lamp", "quantity": 1}
+
+### 6. No key: 400 missing-key
+POST http://localhost:8080/orders
+Content-Type: application/json
+
+{"item": "book", "quantity": 1}

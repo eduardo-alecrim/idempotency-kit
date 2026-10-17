@@ -55,6 +55,7 @@
     <module>idempotency-quarkus</module>
     <module>idempotency-client</module>
     <module>idempotency-test-kit</module>
+    <module>samples/spring-boot-sample</module>
     <module>coverage-report</module>
   </modules>
 
