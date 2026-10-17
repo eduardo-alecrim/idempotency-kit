@@ -27,7 +27,8 @@ import org.springframework.web.server.ResponseStatusException;
 
 /** A web application with idempotent handlers, behind Spring Security with HTTP basic authentication. */
 @SpringBootConfiguration
-@EnableAutoConfiguration
+// No database here; HikariCP is on the test class path for the JDBC tests
+@EnableAutoConfiguration(excludeName = "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration")
 @Import(WebTestApplication.Orders.class)
 class WebTestApplication {
 

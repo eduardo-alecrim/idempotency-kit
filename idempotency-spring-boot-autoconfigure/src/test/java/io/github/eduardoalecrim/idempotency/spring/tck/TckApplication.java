@@ -34,7 +34,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** The {@code /tck/*} endpoints of SPEC §9, with a controllable clock and store. */
 @SpringBootConfiguration
-@EnableAutoConfiguration
+// No database here; HikariCP is on the test class path for the JDBC tests
+@EnableAutoConfiguration(excludeName = "org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration")
 @Import(TckApplication.TckController.class)
 class TckApplication {
 
