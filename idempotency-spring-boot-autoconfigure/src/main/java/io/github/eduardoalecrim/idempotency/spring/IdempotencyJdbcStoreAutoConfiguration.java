@@ -81,7 +81,7 @@ public final class IdempotencyJdbcStoreAutoConfiguration {
             throw IdempotencyConfigurationException.property("idempotency.store.timeout", "it must be positive");
         }
         JdbcIdempotencyStore.Builder builder =
-                JdbcIdempotencyStore.builder(dataSource).queryTimeout(timeout);
+                JdbcIdempotencyStore.builder(dataSource).timeout(timeout);
         try {
             builder.tableName(jdbc.getTableName());
         } catch (IllegalArgumentException e) {
