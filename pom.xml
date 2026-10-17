@@ -81,6 +81,13 @@
     <jqwik.version>1.10.2</jqwik.version>
     <testcontainers.version>2.0.5</testcontainers.version>
     <awaitility.version>4.3.0</awaitility.version>
+    <!-- JDBC drivers and pool, for the store tests -->
+    <postgresql.version>42.7.14</postgresql.version>
+    <mysql-connector-j.version>26.7.0</mysql-connector-j.version>
+    <mariadb-java-client.version>3.5.10</mariadb-java-client.version>
+    <ojdbc11.version>23.26.3.0.0</ojdbc11.version>
+    <mssql-jdbc.version>13.6.1.jre11</mssql-jdbc.version>
+    <hikaricp.version>7.1.0</hikaricp.version>
 
     <!-- Plugins -->
     <maven-clean-plugin.version>3.5.0</maven-clean-plugin.version>
