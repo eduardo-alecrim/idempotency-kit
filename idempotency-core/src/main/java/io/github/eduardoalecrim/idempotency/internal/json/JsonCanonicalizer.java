@@ -63,7 +63,7 @@ public final class JsonCanonicalizer {
                     out.append(',');
                 }
                 first = false;
-                writeString((String) member.getKey(), out);
+                JsonStrings.quote((String) member.getKey(), out);
                 out.append(':');
                 write(member.getValue(), out);
             }
@@ -78,39 +78,12 @@ public final class JsonCanonicalizer {
             }
             out.append(']');
         } else if (value instanceof String string) {
-            writeString(string, out);
+            JsonStrings.quote(string, out);
         } else if (value instanceof Double number) {
             out.append(JcsNumbers.serialize(number));
         } else {
             out.append(((Literal) value).text);
         }
-    }
-
-    // RFC 8785 section 3.2.2.2
-    private static void writeString(String value, StringBuilder out) {
-        out.append('"');
-        for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            switch (c) {
-                case '"' -> out.append("\\\"");
-                case '\\' -> out.append("\\\\");
-                case '\b' -> out.append("\\b");
-                case '\f' -> out.append("\\f");
-                case '\n' -> out.append("\\n");
-                case '\r' -> out.append("\\r");
-                case '\t' -> out.append("\\t");
-                default -> {
-                    if (c < 0x20) {
-                        out.append("\\u00")
-                                .append(Character.forDigit(c >> 4, 16))
-                                .append(Character.forDigit(c & 0xF, 16));
-                    } else {
-                        out.append(c);
-                    }
-                }
-            }
-        }
-        out.append('"');
     }
 
     private enum Literal {
