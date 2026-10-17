@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- No parent: importing this BOM must not import the build's own dependency management. -->
+  <groupId>io.github.eduardo-alecrim</groupId>
+  <artifactId>idempotency-bom</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <name>idempotency-bom</name>
+  <description>Aligns the versions of every idempotency-kit module.</description>
+  <url>https://github.com/eduardo-alecrim/idempotency-kit</url>
+  <inceptionYear>2026</inceptionYear>
+
+  <licenses>
+    <license>
+      <name>Apache-2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+      <distribution>repo</distribution>
+    </license>
+  </licenses>
+
+  <developers>
+    <developer>
+      <id>eduardo-alecrim</id>
+      <name>Eduardo Alecrim</name>
+      <url>https://eduardo-alecrim.github.io</url>
+    </developer>
+  </developers>
+
+  <scm>
+    <connection>scm:git:https://github.com/eduardo-alecrim/idempotency-kit.git</connection>
+    <developerConnection>scm:git:git@github.com:eduardo-alecrim/idempotency-kit.git</developerConnection>
+    <url>https://github.com/eduardo-alecrim/idempotency-kit</url>
+    <tag>HEAD</tag>
+  </scm>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>io.github.eduardo-alecrim</groupId>
+        <artifactId>idempotency-core</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.eduardo-alecrim</groupId>
+        <artifactId>idempotency-store-jdbc</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.eduardo-alecrim</groupId>
+        <artifactId>idempotency-store-redis</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.eduardo-alecrim</groupId>
+        <artifactId>idempotency-spring-boot-autoconfigure</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.eduardo-alecrim</groupId>
+        <artifactId>idempotency-spring-boot-starter</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.eduardo-alecrim</groupId>
+        <artifactId>idempotency-quarkus</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.eduardo-alecrim</groupId>
+        <artifactId>idempotency-quarkus-deployment</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.eduardo-alecrim</groupId>
+        <artifactId>idempotency-client</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.github.eduardo-alecrim</groupId>
+        <artifactId>idempotency-test-kit</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+</project>
