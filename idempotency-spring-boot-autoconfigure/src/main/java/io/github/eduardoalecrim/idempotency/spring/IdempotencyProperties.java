@@ -461,6 +461,13 @@ public class IdempotencyProperties {
             /** When to create the table with the shipped {@code schema-{vendor}.sql}. */
             private InitializeSchema initializeSchema = InitializeSchema.NEVER;
 
+            private final Cleanup cleanup = new Cleanup();
+
+            /** Returns the purge job settings. */
+            public Cleanup getCleanup() {
+                return cleanup;
+            }
+
             /** Returns the table name. */
             public String getTableName() {
                 return tableName;
@@ -499,6 +506,49 @@ public class IdempotencyProperties {
             /** Sets when the table is created. */
             public void setInitializeSchema(InitializeSchema initializeSchema) {
                 this.initializeSchema = initializeSchema;
+            }
+
+            /** Purge job settings. */
+            public static class Cleanup {
+
+                /** Whether expired rows are deleted on a schedule. */
+                private boolean enabled = true;
+
+                /** Time between two purges. */
+                private Duration interval = Duration.ofMinutes(5);
+
+                /** Rows deleted by one statement; a purge repeats it until fewer rows are deleted. */
+                private int batchSize = 1000;
+
+                /** Returns whether the purge job runs. */
+                public boolean isEnabled() {
+                    return enabled;
+                }
+
+                /** Sets whether the purge job runs. */
+                public void setEnabled(boolean enabled) {
+                    this.enabled = enabled;
+                }
+
+                /** Returns the time between two purges. */
+                public Duration getInterval() {
+                    return interval;
+                }
+
+                /** Sets the time between two purges. */
+                public void setInterval(Duration interval) {
+                    this.interval = interval;
+                }
+
+                /** Returns the rows per delete statement. */
+                public int getBatchSize() {
+                    return batchSize;
+                }
+
+                /** Sets the rows per delete statement. */
+                public void setBatchSize(int batchSize) {
+                    this.batchSize = batchSize;
+                }
             }
         }
 

@@ -1,4 +1,5 @@
 io.github.eduardoalecrim.idempotency.spring.IdempotencyJdbcStoreAutoConfiguration
+io.github.eduardoalecrim.idempotency.spring.IdempotencyJdbcCleanupAutoConfiguration
 io.github.eduardoalecrim.idempotency.spring.IdempotencyInMemoryStoreAutoConfiguration
 io.github.eduardoalecrim.idempotency.spring.IdempotencyAutoConfiguration
 io.github.eduardoalecrim.idempotency.spring.web.IdempotencyWebMvcAutoConfiguration

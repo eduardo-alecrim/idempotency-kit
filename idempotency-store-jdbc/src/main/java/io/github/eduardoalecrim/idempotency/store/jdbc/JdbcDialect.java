@@ -19,13 +19,18 @@ public enum JdbcDialect {
     POSTGRESQL(true, true) {
         @Override
         PreparedStatement purge(Connection connection, String table, Instant now, int batchSize) throws SQLException {
-            // SKIP LOCKED lets several instances purge at once without waiting for each other.
-            PreparedStatement statement = connection.prepareStatement("DELETE FROM " + table
-                    + " WHERE expires_at < ? AND scope_key IN (SELECT scope_key FROM " + table
-                    + " WHERE expires_at < ? ORDER BY expires_at LIMIT ? FOR UPDATE SKIP LOCKED)");
+            // SKIP LOCKED lets several instances purge at once without waiting for each other. The batch is a
+            // materialized CTE, so it runs once: as an IN subquery a nested loop rescans it, the rescan skips the rows
+            // the statement already deleted, and every expired row goes in one statement.
+            PreparedStatement statement =
+                    connection.prepareStatement("WITH batch AS MATERIALIZED (SELECT scope_key FROM "
+                            + table
+                            + " WHERE expires_at < ? ORDER BY expires_at LIMIT ? FOR UPDATE SKIP LOCKED) DELETE FROM "
+                            + table
+                            + " WHERE scope_key IN (SELECT scope_key FROM batch) AND expires_at < ?");
             setInstant(statement, 1, now);
-            setInstant(statement, 2, now);
-            statement.setInt(3, batchSize);
+            statement.setInt(2, batchSize);
+            setInstant(statement, 3, now);
             return statement;
         }
     },
