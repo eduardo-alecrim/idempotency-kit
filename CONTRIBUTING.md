@@ -11,6 +11,17 @@ You need JDK 17 or newer; CI builds on 17, 21 and 25.
 
 On JDK 25 the build also runs Error Prone and NullAway. Store tests use Testcontainers and need a running Docker daemon.
 
+The JDBC store TCK runs on PostgreSQL and MySQL by default. Two system properties change that:
+
+```shell
+# one database, or a list, or all five: postgresql, mysql, mariadb, oracle, sqlserver
+./mvnw -pl idempotency-store-jdbc verify -Didempotency.tck.databases=oracle
+# rounds of the concurrency test: 20 by default, 100 on pull requests, 10 000 nightly
+./mvnw -pl idempotency-store-jdbc verify -Didempotency.tck.race.iterations=1000
+```
+
+The nightly workflow runs all five databases with 10 000 rounds. Start it by hand from the Actions tab.
+
 ## Workflow
 
 - Every change starts from an issue. Pick one from the [milestones](https://github.com/eduardo-alecrim/idempotency-kit/milestones) or open one.
