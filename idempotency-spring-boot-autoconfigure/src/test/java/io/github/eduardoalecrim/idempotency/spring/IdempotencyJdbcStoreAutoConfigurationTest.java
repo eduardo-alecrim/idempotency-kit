@@ -2,16 +2,26 @@
 package io.github.eduardoalecrim.idempotency.spring;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 import io.github.eduardoalecrim.idempotency.IdempotencyEngine;
+import io.github.eduardoalecrim.idempotency.spi.ClaimRequest;
+import io.github.eduardoalecrim.idempotency.spi.Fingerprint;
 import io.github.eduardoalecrim.idempotency.spi.IdempotencyStore;
+import io.github.eduardoalecrim.idempotency.spi.ScopeKey;
+import io.github.eduardoalecrim.idempotency.spi.ScopeParts;
 import io.github.eduardoalecrim.idempotency.store.jdbc.JdbcDialect;
 import io.github.eduardoalecrim.idempotency.store.jdbc.JdbcIdempotencyStore;
 import io.github.eduardoalecrim.idempotency.store.jdbc.JdbcSchema;
 import io.github.eduardoalecrim.idempotency.store.memory.InMemoryIdempotencyStore;
+import java.security.SecureRandom;
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.HexFormat;
 import java.util.Objects;
 import java.util.UUID;
 import javax.sql.DataSource;
@@ -36,6 +46,7 @@ class IdempotencyJdbcStoreAutoConfigurationTest {
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(
                     IdempotencyJdbcStoreAutoConfiguration.class,
+                    IdempotencyJdbcCleanupAutoConfiguration.class,
                     IdempotencyInMemoryStoreAutoConfiguration.class,
                     IdempotencyAutoConfiguration.class));
 
@@ -152,6 +163,46 @@ class IdempotencyJdbcStoreAutoConfigurationTest {
     }
 
     @Test
+    @DisplayName("FR-26: the purge job deletes expired rows on schedule and keeps live ones")
+    void purgesExpiredRowsOnSchedule() throws Exception {
+        DataSource dataSource = freshSchema();
+        JdbcSchema.createIfMissing(dataSource, JdbcDialect.POSTGRESQL, TABLE);
+        Instant now = Instant.now();
+        JdbcIdempotencyStore direct = JdbcIdempotencyStore.builder(dataSource).build();
+        for (int i = 0; i < 5; i++) {
+            direct.claim(claim(now.minus(Duration.ofHours(2)), now.minusSeconds(i + 1)));
+        }
+        direct.claim(claim(now, now.plus(Duration.ofHours(1))));
+
+        runner.withBean(DataSource.class, () -> dataSource)
+                .withPropertyValues(
+                        "idempotency.store.jdbc.cleanup.interval=100ms", "idempotency.store.jdbc.cleanup.batch-size=2")
+                .run(context -> {
+                    assertThat(context.getBean(IdempotencyJdbcCleanup.class).isRunning())
+                            .isTrue();
+                    await().atMost(Duration.ofSeconds(10)).until(() -> rows(dataSource) == 1);
+                });
+    }
+
+    @Test
+    @DisplayName("the purge job is off with cleanup.enabled=false, and a failed purge is only logged")
+    void purgeJobSwitchAndFailures() {
+        runner.withBean(DataSource.class, IdempotencyJdbcStoreAutoConfigurationTest::unreachable)
+                .withPropertyValues(
+                        "idempotency.store.jdbc.validate-schema=false", "idempotency.store.jdbc.dialect=postgresql")
+                .run(context -> assertThat(
+                                context.getBean(IdempotencyJdbcCleanup.class).purge())
+                        .isZero());
+        runner.withBean(DataSource.class, IdempotencyJdbcStoreAutoConfigurationTest::unreachable)
+                .withPropertyValues(
+                        "idempotency.store.jdbc.validate-schema=false",
+                        "idempotency.store.jdbc.dialect=postgresql",
+                        "idempotency.store.jdbc.cleanup.enabled=false")
+                .run(context -> assertThat(context).doesNotHaveBean(IdempotencyJdbcCleanup.class));
+        runner.run(context -> assertThat(context).doesNotHaveBean(IdempotencyJdbcCleanup.class));
+    }
+
+    @Test
     void rejectsInvalidValues() {
         ApplicationContextRunner withData =
                 runner.withBean(DataSource.class, IdempotencyJdbcStoreAutoConfigurationTest::unreachable);
@@ -163,6 +214,38 @@ class IdempotencyJdbcStoreAutoConfigurationTest {
                 "idempotency.store.jdbc.initialize-schema",
                 "idempotency.store.jdbc.initialize-schema=always",
                 "idempotency.store.jdbc.table-name=app.keys");
+
+        ApplicationContextRunner unvalidated = withData.withPropertyValues(
+                "idempotency.store.jdbc.validate-schema=false", "idempotency.store.jdbc.dialect=postgresql");
+        expectInvalid(
+                unvalidated, "idempotency.store.jdbc.cleanup.interval", "idempotency.store.jdbc.cleanup.interval=0s");
+        expectInvalid(
+                unvalidated,
+                "idempotency.store.jdbc.cleanup.batch-size",
+                "idempotency.store.jdbc.cleanup.batch-size=0");
+    }
+
+    private static ClaimRequest claim(Instant now, Instant expiresAt) {
+        byte[] bytes = new byte[64];
+        new SecureRandom().nextBytes(bytes);
+        HexFormat hex = HexFormat.of();
+        Instant leaseUntil = now.plusSeconds(30).isBefore(expiresAt) ? now.plusSeconds(30) : expiresAt;
+        return new ClaimRequest(
+                new ScopeKey(hex.formatHex(bytes, 0, 32)),
+                new ScopeParts("k", "", "POST", "/orders"),
+                new Fingerprint(hex.formatHex(bytes, 32, 64)),
+                now,
+                leaseUntil,
+                expiresAt);
+    }
+
+    private static int rows(DataSource dataSource) throws SQLException {
+        try (Connection connection = dataSource.getConnection();
+                Statement statement = connection.createStatement();
+                ResultSet result = statement.executeQuery("SELECT COUNT(*) FROM " + TABLE)) {
+            result.next();
+            return result.getInt(1);
+        }
     }
 
     private static void expectInvalid(ApplicationContextRunner runner, String property, String... values) {

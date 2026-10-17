@@ -84,8 +84,11 @@ enum TestDatabase {
         return dataSource;
     }
 
-    /** Creates an empty PostgreSQL schema and returns a data source whose current schema it is. Close it after use. */
-    static HikariDataSource freshPostgreSqlSchema(String schema) throws SQLException {
+    /**
+     * Creates an empty PostgreSQL schema and returns a data source whose current schema it is, running {@code settings}
+     * on each new connection. Close it after use.
+     */
+    static HikariDataSource freshPostgreSqlSchema(String schema, String... settings) throws SQLException {
         HikariDataSource shared = (HikariDataSource) POSTGRESQL.dataSource();
         try (Connection connection = shared.getConnection();
                 Statement statement = connection.createStatement()) {
@@ -97,6 +100,9 @@ enum TestDatabase {
         config.setUsername(shared.getUsername());
         config.setPassword(shared.getPassword());
         config.setMaximumPoolSize(2);
+        if (settings.length > 0) {
+            config.setConnectionInitSql(String.join("; ", settings));
+        }
         return new HikariDataSource(config);
     }
 }

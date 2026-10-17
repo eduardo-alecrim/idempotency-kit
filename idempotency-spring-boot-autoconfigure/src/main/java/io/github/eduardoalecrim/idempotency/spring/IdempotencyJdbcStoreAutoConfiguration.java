@@ -41,7 +41,7 @@ import org.springframework.core.type.AnnotatedTypeMetadata;
 @ConditionalOnMissingBean(IdempotencyStore.class)
 public final class IdempotencyJdbcStoreAutoConfiguration {
 
-    private static final String PREFIX = "idempotency.store.jdbc.";
+    static final String PREFIX = "idempotency.store.jdbc.";
 
     /** With {@code idempotency.store.type=auto}, the store needs exactly one data source. */
     @Configuration(proxyBeanMethods = false)
