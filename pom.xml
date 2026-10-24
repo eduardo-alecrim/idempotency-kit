@@ -69,7 +69,7 @@
 
     <!-- Frameworks: imported as BOMs only by the modules that use them -->
     <spring-boot.version>4.1.1</spring-boot.version>
-    <quarkus.version>3.40.1</quarkus.version>
+    <quarkus.version>3.40.1.1</quarkus.version>
 
     <jspecify.version>1.0.1</jspecify.version>
     <error-prone.version>2.50.0</error-prone.version>
@@ -83,7 +83,7 @@
     <awaitility.version>4.3.0</awaitility.version>
     <!-- JDBC drivers and pool, for the store tests -->
     <postgresql.version>42.7.14</postgresql.version>
-    <mysql-connector-j.version>26.7.0</mysql-connector-j.version>
+    <mysql-connector-j.version>26.10.0</mysql-connector-j.version>
     <mariadb-java-client.version>3.5.10</mariadb-java-client.version>
     <ojdbc11.version>23.26.3.0.0</ojdbc11.version>
     <mssql-jdbc.version>13.6.1.jre11</mssql-jdbc.version>
